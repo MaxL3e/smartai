@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
@@ -179,6 +179,8 @@ const knowledgeSeed = [
   { id: 6, type: '制度流程', title: '招聘审批权限与面试官规则', format: 'DOCX', owner: '组织人事部', updated: '2026-06-26', status: '可用', refs: 9, version: 'v2.4' },
   { id: 7, type: '岗位知识', title: '2024-2025研发招聘复盘', format: 'PPTX', owner: '招聘中心', updated: '2026-06-20', status: '待复核', refs: 3, version: 'v1.0' },
   { id: 8, type: '制度流程', title: '候选人数据合规与留存规范', format: 'PDF', owner: '法律合规部', updated: '2026-06-18', status: '可用', refs: 17, version: 'v1.5' },
+  { id: 9, type: '岗位知识', title: '数据治理岗位族任职资格标准', format: 'DOCX', owner: '数字科技部', updated: '2026-07-20', status: '可用', refs: 15, version: 'v1.4' },
+  { id: 10, type: '人才画像', title: '数据治理项目骨干成功特征分析', format: 'PDF', owner: '人才发展中心', updated: '2026-07-19', status: '可用', refs: 11, version: 'v1.2' },
 ];
 
 const initialEvents = [
@@ -187,6 +189,96 @@ const initialEvents = [
   { time: '14:31:22', title: '读取知识库资料', detail: '引用 4 份岗位知识与 2 份人才画像', type: 'success' },
   { time: '14:30:59', title: '人工确认岗位方案', detail: '招聘经理李佳确认 JD 与推荐标准', type: 'human' },
 ];
+
+const initialTasks = [
+  { code: 'R2026-0718', role: '高级后端开发工程师', dept: '数字科技部', city: '北京', count: '2人', headcount: 2, stage: '名单确认', progress: 48, owner: '李佳', due: '08-15', tone: 'blue', recruitmentType: '社会招聘', priority: '高', requirement: '负责集团级数字化平台核心服务的架构设计与研发。' },
+  { code: 'R2026-0712', role: '财务共享中心经理', dept: '财务管理部', city: '上海', count: '1人', headcount: 1, stage: '在线面试', progress: 66, owner: '王楠', due: '08-08', tone: 'amber', recruitmentType: '社会招聘', priority: '中', requirement: '负责财务共享中心运营管理与流程优化。' },
+  { code: 'R2026-0709', role: '能源市场分析师', dept: '战略发展部', city: '北京', count: '3人', headcount: 3, stage: '人才搜索', progress: 31, owner: '张晨', due: '08-20', tone: 'green', recruitmentType: '校园招聘', priority: '中', requirement: '跟踪能源市场趋势并形成经营分析建议。' },
+  { code: 'R2026-0626', role: '合规风控主管', dept: '法律合规部', city: '深圳', count: '1人', headcount: 1, stage: '综合评价', progress: 86, owner: '陈敏', due: '07-30', tone: 'gray', recruitmentType: '社会招聘', priority: '高', requirement: '建立业务合规审查和风险预警机制。' },
+];
+
+function loadTasks() {
+  try {
+    const stored = window.localStorage.getItem('smartai.recruitmentTasks');
+    return stored ? JSON.parse(stored) : initialTasks;
+  } catch {
+    return initialTasks;
+  }
+}
+
+function getRolePlan(task) {
+  const role = task?.role || '';
+  if (role.includes('数据')) {
+    return {
+      duties: [
+        '负责集团数据标准、主数据和数据质量体系的规划与持续建设。',
+        '识别跨系统数据问题，建立质量监控、问题闭环和治理度量机制。',
+        '协同业务与技术团队推进数据资产盘点、目录建设和标准落地。',
+        '沉淀数据治理制度、方法与工具，支撑经营分析和智能化应用。',
+      ],
+      requirements: [
+        '5年以上数据治理、数据管理或企业数据平台建设经验',
+        '熟悉数据标准、主数据、元数据与数据质量管理方法',
+        '具有大型企业跨部门数据治理项目的规划和落地经验',
+        '具备良好的业务理解、沟通协调与项目推动能力',
+      ],
+      tags: ['大型企业数据治理', '数据标准体系', '跨部门项目推动'],
+      scoreRules: [
+        { label: '治理专业能力', weight: 30, detail: '数据标准、主数据、质量与元数据' },
+        { label: '项目复杂度', weight: 30, detail: '组织范围、承担角色、落地规模' },
+        { label: '业务与行业', weight: 20, detail: '业务理解、大型企业治理经验' },
+        { label: '成果证据', weight: 20, detail: '质量提升、覆盖范围、应用成效' },
+      ],
+      sourceIds: [9, 10, 1, 5],
+    };
+  }
+  if (role.includes('后端') || role.includes('Java')) {
+    return {
+      duties: [
+        '负责集团数字化平台核心业务服务的设计、研发与持续演进。',
+        '参与技术架构评审，识别系统风险并推动性能和稳定性治理。',
+        '沉淀通用研发规范与技术组件，提升团队工程交付效率。',
+        '协同产品、业务和测试团队，保障重点项目按计划高质量落地。',
+      ],
+      requirements: [
+        '5年以上 Java 后端研发经验，具备复杂业务系统设计能力',
+        '熟悉 Spring Boot、Spring Cloud、MySQL 与消息中间件',
+        '具有高并发、分布式系统的性能治理和稳定性建设经验',
+        '具备良好的跨团队沟通、技术方案表达与项目推动能力',
+      ],
+      tags: ['央企数字化项目经验', '大型分布式系统经验', '技术带教经验'],
+      scoreRules: [
+        { label: '核心技术能力', weight: 30, detail: '技术栈覆盖、架构设计、问题诊断' },
+        { label: '项目复杂度', weight: 30, detail: '系统规模、承担角色、复杂问题处理' },
+        { label: '行业与业务', weight: 20, detail: '企业服务、央企数字化、业务理解' },
+        { label: '成果证据', weight: 20, detail: '可量化效果、稳定性、交付质量' },
+      ],
+      sourceIds: [1, 2, 3, 4],
+    };
+  }
+  return {
+    duties: [
+      '负责集团数字化平台核心业务服务的设计、研发与持续演进。',
+      '参与专业方案评审，识别关键风险并推动质量与效能提升。',
+      '沉淀通用工作规范与专业方法，提升团队协作和交付效率。',
+      '协同相关部门，保障重点项目按计划高质量落地。',
+    ],
+    requirements: [
+      '5年以上相关岗位工作经验，具备复杂项目设计与落地能力',
+      '熟悉岗位核心专业方法、工作流程与常用工具',
+      '具有大型企业复杂项目的问题分析和推动经验',
+      '具备良好的跨团队沟通、方案表达与项目推动能力',
+    ],
+    tags: ['大型企业项目经验', '复杂项目落地', '跨团队协作'],
+    scoreRules: [
+      { label: '核心专业能力', weight: 30, detail: '专业知识、方案设计、问题诊断' },
+      { label: '项目复杂度', weight: 30, detail: '项目规模、承担角色、复杂问题处理' },
+      { label: '行业与业务', weight: 20, detail: '大型企业经验、业务理解' },
+      { label: '成果证据', weight: 20, detail: '可量化效果、质量、交付成果' },
+    ],
+    sourceIds: [1, 3, 5, 6],
+  };
+}
 
 function classNames(...values) {
   return values.filter(Boolean).join(' ');
@@ -216,10 +308,18 @@ function App() {
   const [selectedCandidates, setSelectedCandidates] = useState([1, 2]);
   const [knowledge, setKnowledge] = useState(knowledgeSeed);
   const [events, setEvents] = useState(initialEvents);
+  const [tasks, setTasks] = useState(loadTasks);
+  const [activeTaskId, setActiveTaskId] = useState(initialTasks[0].code);
   const [toast, setToast] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
 
   const candidate = candidatesSeed.find((item) => item.id === selectedCandidate);
+  const activeTask = tasks.find((item) => item.code === activeTaskId) || tasks[0];
+
+  useEffect(() => {
+    window.localStorage.setItem('smartai.recruitmentTasks', JSON.stringify(tasks));
+  }, [tasks]);
 
   function notify(message) {
     setToast(message);
@@ -275,6 +375,36 @@ function App() {
     notify('资料已进入解析队列');
   }
 
+  function createTask(form) {
+    const now = new Date();
+    const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const sequence = String(tasks.length + 1).padStart(2, '0');
+    const code = `R${datePart}-${sequence}`;
+    const due = form.due ? form.due.slice(5).replace('-', '-') : '待确定';
+    const task = {
+      code,
+      role: form.role.trim(),
+      dept: form.dept,
+      city: form.city.trim(),
+      count: `${form.headcount}人`,
+      headcount: Number(form.headcount),
+      stage: '岗位方案',
+      progress: 12,
+      owner: '李佳',
+      due,
+      tone: 'green',
+      recruitmentType: form.recruitmentType,
+      priority: form.priority,
+      requirement: form.requirement.trim(),
+    };
+    setTasks((items) => [task, ...items]);
+    setActiveTaskId(code);
+    setTaskModalOpen(false);
+    setView('roleplan');
+    pushEvent('创建招聘任务', `${task.role} · ${task.dept} · 招聘 ${task.count}`, 'human');
+    notify(`招聘任务 ${code} 已创建`);
+  }
+
   const context = {
     view,
     setView,
@@ -286,16 +416,20 @@ function App() {
     selectedCandidates,
     toggleCandidate,
     knowledge,
+    tasks,
+    activeTask,
+    setActiveTaskId,
     events,
     notify,
     pushEvent,
     advanceFlow,
     setModalOpen,
+    setTaskModalOpen,
   };
 
   return (
     <div className="app-shell">
-      <Sidebar view={view} setView={setView} />
+      <Sidebar view={view} setView={setView} taskCount={tasks.length} />
       <div className="app-column">
         <Topbar setView={setView} />
         <main className="main-content">
@@ -310,6 +444,7 @@ function App() {
         </main>
       </div>
       {modalOpen && <KnowledgeModal onClose={() => setModalOpen(false)} onSubmit={addKnowledge} />}
+      {taskModalOpen && <TaskModal onClose={() => setTaskModalOpen(false)} onSubmit={createTask} />}
       {toast && (
         <div className="toast" role="status">
           <CheckCircle2 size={18} />
@@ -320,7 +455,7 @@ function App() {
   );
 }
 
-function Sidebar({ view, setView }) {
+function Sidebar({ view, setView, taskCount }) {
   return (
     <aside className="sidebar">
       <button className="brand" onClick={() => setView('workspace')} aria-label="返回工作台">
@@ -330,7 +465,7 @@ function Sidebar({ view, setView }) {
 
       <nav className="primary-nav" aria-label="主导航">
         <span className="nav-label">招聘执行</span>
-        {navItems.map((item) => <NavItem key={item.id} item={item} active={view === item.id} onClick={() => setView(item.id)} />)}
+        {navItems.map((item) => <NavItem key={item.id} item={item.id === 'tasks' ? { ...item, count: taskCount } : item} active={view === item.id} onClick={() => setView(item.id)} />)}
         <span className="nav-label manage-label">智能体管理</span>
         {manageItems.map((item) => <NavItem key={item.id} item={item} active={view === item.id} onClick={() => setView(item.id)} />)}
       </nav>
@@ -485,21 +620,12 @@ function Workspace({ flowStep, selectedCandidates, setView, advanceFlow, events 
   );
 }
 
-function RolePlan({ setView, notify, pushEvent }) {
+function RolePlan({ setView, notify, pushEvent, activeTask }) {
+  const generatedPlan = useMemo(() => getRolePlan(activeTask), [activeTask]);
   const [editing, setEditing] = useState(false);
-  const [summary, setSummary] = useState('负责集团级数字化平台核心服务的架构设计与研发，持续提升系统稳定性、交付效率与业务支撑能力。');
-  const [requirements, setRequirements] = useState([
-    '5年以上 Java 后端研发经验，具备复杂业务系统设计能力',
-    '熟悉 Spring Boot、Spring Cloud、MySQL 与消息中间件',
-    '具有高并发、分布式系统的性能治理和稳定性建设经验',
-    '具备良好的跨团队沟通、技术方案表达与项目推动能力',
-  ]);
-  const scoreRules = [
-    { label: '核心技术能力', weight: 30, detail: '技术栈覆盖、架构设计、问题诊断' },
-    { label: '项目复杂度', weight: 30, detail: '系统规模、承担角色、复杂问题处理' },
-    { label: '行业与业务', weight: 20, detail: '企业服务、央企数字化、业务理解' },
-    { label: '成果证据', weight: 20, detail: '可量化效果、稳定性、交付质量' },
-  ];
+  const [summary, setSummary] = useState(activeTask?.requirement || '负责核心业务工作，持续提升组织效能与业务支撑能力。');
+  const [requirements, setRequirements] = useState(generatedPlan.requirements);
+  const scoreRules = generatedPlan.scoreRules;
 
   function savePlan() {
     setEditing(false);
@@ -510,9 +636,9 @@ function RolePlan({ setView, notify, pushEvent }) {
   return (
     <>
       <PageHeader
-        eyebrow="招聘任务 R2026-0718 / 岗位方案"
-        title="高级后端开发工程师"
-        description="智能体基于企业历史招聘数据生成，可由招聘经理审核修订"
+        eyebrow={`招聘任务 ${activeTask?.code || 'R2026-0718'} / 岗位方案`}
+        title={activeTask?.role || '高级后端开发工程师'}
+        description={`${activeTask?.dept || '数字科技部'} · ${activeTask?.city || '北京'} · 招聘 ${activeTask?.count || '2人'} · 智能体生成方案待审核`}
         actions={<><button className="btn secondary" onClick={() => setEditing((value) => !value)}>{editing ? <X size={16} /> : <FileText size={16} />}{editing ? '取消编辑' : '编辑方案'}</button><button className="btn primary" onClick={savePlan}><CheckCircle2 size={17} />确认岗位方案</button></>}
       />
       <section className="plan-source-band">
@@ -529,10 +655,7 @@ function RolePlan({ setView, notify, pushEvent }) {
           <div className="document-block">
             <h3>核心职责</h3>
             <ol>
-              <li>负责集团数字化平台核心业务服务的设计、研发与持续演进。</li>
-              <li>参与技术架构评审，识别系统风险并推动性能和稳定性治理。</li>
-              <li>沉淀通用研发规范与技术组件，提升团队工程交付效率。</li>
-              <li>协同产品、业务和测试团队，保障重点项目按计划高质量落地。</li>
+              {generatedPlan.duties.map((item) => <li key={item}>{item}</li>)}
             </ol>
           </div>
           <div className="document-block">
@@ -545,7 +668,7 @@ function RolePlan({ setView, notify, pushEvent }) {
           </div>
           <div className="document-block optional-block">
             <h3>优先条件</h3>
-            <div className="tag-list"><span>央企数字化项目经验</span><span>大型分布式系统经验</span><span>技术带教经验</span></div>
+            <div className="tag-list">{generatedPlan.tags.map((item) => <span key={item}>{item}</span>)}</div>
           </div>
         </section>
         <aside className="plan-side">
@@ -558,7 +681,7 @@ function RolePlan({ setView, notify, pushEvent }) {
           </section>
           <section className="panel source-panel">
             <div className="panel-heading"><div><span className="section-kicker">生成依据</span><h2>知识来源</h2></div><button className="icon-button small" onClick={() => setView('knowledge')}><ArrowRight size={16} /></button></div>
-            {knowledgeSeed.slice(0, 4).map((item) => <button className="plan-source" key={item.id} onClick={() => setView('knowledge')}><FileText size={17} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={14} /></button>)}
+            {generatedPlan.sourceIds.map((id) => knowledgeSeed.find((item) => item.id === id)).filter(Boolean).map((item) => <button className="plan-source" key={item.id} onClick={() => setView('knowledge')}><FileText size={17} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={14} /></button>)}
           </section>
           <button className="back-workspace" onClick={() => setView('workspace')}><ArrowLeft size={16} />返回招聘任务工作台</button>
         </aside>
@@ -567,17 +690,11 @@ function RolePlan({ setView, notify, pushEvent }) {
   );
 }
 
-function Tasks({ setView, notify }) {
-  const tasks = [
-    { code: 'R2026-0718', role: '高级后端开发工程师', dept: '数字科技部', city: '北京', count: '2人', stage: '名单确认', progress: 48, owner: '李佳', due: '08-15', tone: 'blue' },
-    { code: 'R2026-0712', role: '财务共享中心经理', dept: '财务管理部', city: '上海', count: '1人', stage: '在线面试', progress: 66, owner: '王楠', due: '08-08', tone: 'amber' },
-    { code: 'R2026-0709', role: '能源市场分析师', dept: '战略发展部', city: '北京', count: '3人', stage: '人才搜索', progress: 31, owner: '张晨', due: '08-20', tone: 'green' },
-    { code: 'R2026-0626', role: '合规风控主管', dept: '法律合规部', city: '深圳', count: '1人', stage: '综合评价', progress: 86, owner: '陈敏', due: '07-30', tone: 'gray' },
-  ];
+function Tasks({ setView, tasks, setActiveTaskId, setTaskModalOpen }) {
   return (
     <>
       <PageHeader eyebrow="招聘执行" title="招聘任务" description="统一管理由智能体协同执行的招聘任务"
-        actions={<button className="btn primary" onClick={() => notify('已创建招聘任务草稿')}><Plus size={17} />新建招聘任务</button>} />
+        actions={<button className="btn primary" onClick={() => setTaskModalOpen(true)}><Plus size={17} />新建招聘任务</button>} />
       <section className="toolbar-band">
         <label className="search-field"><Search size={16} /><input placeholder="搜索岗位、部门或任务编号" /></label>
         <button className="btn secondary"><ListFilter size={16} />全部状态<ChevronDown size={14} /></button>
@@ -587,7 +704,7 @@ function Tasks({ setView, notify }) {
         <div className="data-table task-table">
           <div className="table-row table-head"><span>招聘任务</span><span>招聘信息</span><span>当前阶段</span><span>负责人</span><span>计划完成</span><span /></div>
           {tasks.map((task) => (
-            <button className="table-row" key={task.code} onClick={() => setView('workspace')}>
+            <button className="table-row" key={task.code} onClick={() => { setActiveTaskId(task.code); setView(task.code === 'R2026-0718' ? 'workspace' : 'roleplan'); }}>
               <span className="cell-main"><strong>{task.role}</strong><small>{task.code} · {task.dept}</small></span>
               <span><strong>{task.city} · {task.count}</strong><small>社会招聘</small></span>
               <span className="progress-cell"><StatusPill tone={task.tone}>{task.stage}</StatusPill><i><b style={{ width: `${task.progress}%` }} /></i></span>
@@ -599,6 +716,68 @@ function Tasks({ setView, notify }) {
         </div>
       </section>
     </>
+  );
+}
+
+function TaskModal({ onClose, onSubmit }) {
+  const [form, setForm] = useState({
+    role: '',
+    dept: '数字科技部',
+    city: '北京',
+    headcount: 1,
+    recruitmentType: '社会招聘',
+    priority: '中',
+    due: '2026-08-31',
+    requirement: '',
+    useKnowledge: true,
+  });
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    onSubmit(form);
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <form className="modal task-modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div><span className="section-kicker">招聘需求</span><h2>新建招聘任务</h2><p>创建后由智能体生成岗位方案和人才推荐标准</p></div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        </div>
+
+        <div className="form-section">
+          <h3>基本信息</h3>
+          <div className="form-grid">
+            <label className="span-2"><span>招聘岗位 <em>*</em></span><input autoFocus required value={form.role} onChange={(event) => update('role', event.target.value)} placeholder="例如：数据治理专家" /></label>
+            <label><span>需求部门</span><select value={form.dept} onChange={(event) => update('dept', event.target.value)}><option>数字科技部</option><option>财务管理部</option><option>战略发展部</option><option>法律合规部</option><option>组织人事部</option></select></label>
+            <label><span>工作地点</span><input required value={form.city} onChange={(event) => update('city', event.target.value)} /></label>
+            <label><span>招聘人数</span><input required type="number" min="1" max="99" value={form.headcount} onChange={(event) => update('headcount', event.target.value)} /></label>
+            <label><span>招聘类型</span><select value={form.recruitmentType} onChange={(event) => update('recruitmentType', event.target.value)}><option>社会招聘</option><option>校园招聘</option><option>内部竞聘</option></select></label>
+            <label><span>期望完成日期</span><input required type="date" value={form.due} onChange={(event) => update('due', event.target.value)} /></label>
+            <label><span>优先级</span><select value={form.priority} onChange={(event) => update('priority', event.target.value)}><option>高</option><option>中</option><option>低</option></select></label>
+          </div>
+        </div>
+
+        <div className="form-section">
+          <h3>招聘需求</h3>
+          <label className="textarea-label"><span>岗位背景与核心要求 <em>*</em></span><textarea required value={form.requirement} onChange={(event) => update('requirement', event.target.value)} placeholder="简要描述招聘原因、核心职责、必须具备的经验或能力。智能体将据此检索企业知识并生成岗位方案。" /></label>
+        </div>
+
+        <label className="knowledge-switch">
+          <span className={classNames('checkbox', form.useKnowledge && 'checked')}>{form.useKnowledge && <Check size={13} />}</span>
+          <input type="checkbox" checked={form.useKnowledge} onChange={(event) => update('useKnowledge', event.target.checked)} />
+          <BookOpenText size={18} />
+          <span><strong>使用企业知识库生成岗位方案</strong><small>将检索历史 JD、岗位族标准、人才画像和招聘制度</small></span>
+          <StatusPill tone="green">推荐</StatusPill>
+        </label>
+
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={onClose}>取消</button><button type="submit" className="btn primary"><Sparkles size={16} />创建并生成岗位方案</button></div>
+      </form>
+    </div>
   );
 }
 
