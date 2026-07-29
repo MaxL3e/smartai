@@ -41,6 +41,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   UploadCloud,
   UserCheck,
   UserRound,
@@ -334,10 +335,23 @@ function nextStage(stage) {
   return { 岗位方案: '人才搜索', 人才搜索: '名单确认', 名单确认: '在线面试', 在线面试: '综合评价', 综合评价: '已完成' }[stage] || stage;
 }
 
+const defaultPlanThresholds = { strong: 88, recommended: 80, review: 70 };
+
+function resolveRolePlan(task, plan) {
+  return {
+    ...plan,
+    duties: task?.planDuties || plan.duties,
+    requirements: task?.planRequirements || plan.requirements,
+    tags: task?.planTags || plan.tags,
+    scoreRules: task?.planScoreRules || plan.scoreRules,
+    thresholds: task?.planThresholds || defaultPlanThresholds,
+  };
+}
+
 function getRolePlan(task) {
   const role = task?.role || '';
   if (role.includes('数据')) {
-    return {
+    return resolveRolePlan(task, {
       duties: [
         '负责集团数据标准、主数据和数据质量体系的规划与持续建设。',
         '识别跨系统数据问题，建立质量监控、问题闭环和治理度量机制。',
@@ -358,10 +372,10 @@ function getRolePlan(task) {
         { label: '成果证据', weight: 20, detail: '质量提升、覆盖范围、应用成效' },
       ],
       sourceIds: [9, 10, 1, 5],
-    };
+    });
   }
   if (role.includes('后端') || role.includes('Java')) {
-    return {
+    return resolveRolePlan(task, {
       duties: [
         '负责集团数字化平台核心业务服务的设计、研发与持续演进。',
         '参与技术架构评审，识别系统风险并推动性能和稳定性治理。',
@@ -382,9 +396,9 @@ function getRolePlan(task) {
         { label: '成果证据', weight: 20, detail: '可量化效果、稳定性、交付质量' },
       ],
       sourceIds: [1, 2, 3, 4],
-    };
+    });
   }
-  return {
+  return resolveRolePlan(task, {
     duties: [
       '负责集团数字化平台核心业务服务的设计、研发与持续演进。',
       '参与专业方案评审，识别关键风险并推动质量与效能提升。',
@@ -405,13 +419,13 @@ function getRolePlan(task) {
       { label: '成果证据', weight: 20, detail: '可量化效果、质量、交付成果' },
     ],
     sourceIds: [1, 3, 5, 6],
-  };
+  });
 }
 
 function getCandidates(task) {
   const role = task?.role || '';
-  if (role.includes('后端') || role.includes('Java')) return candidatesSeed;
   const plan = getRolePlan(task);
+  const isTechnicalRole = role.includes('后端') || role.includes('Java');
   const governanceTitles = ['数据治理专家', '数据标准工程师', '主数据管理顾问', '数据质量工程师', '数据资产运营经理', '数据管理工程师', '元数据管理顾问', '数据平台工程师', '数据治理分析师', '数据产品经理', '数据架构师', '数据管理专家'];
   const governanceHighlights = [
     ['数据标准体系', '主数据治理', '大型集团项目'],
@@ -421,29 +435,41 @@ function getCandidates(task) {
   ];
   return candidatesSeed.map((person, index) => {
     const isGovernance = role.includes('数据');
-    const title = isGovernance ? governanceTitles[index] : index < 4 ? role : `${role}相关岗位`;
-    const highlights = isGovernance ? governanceHighlights[index % governanceHighlights.length] : [`${role}相关经验`, '大型企业项目', index % 2 ? '跨部门协同' : '复杂项目落地'];
-    const evidence = plan.scoreRules.map((rule, ruleIndex) => ({
-      label: rule.label,
-      value: Math.round(person.score * rule.weight / 100),
-      max: rule.weight,
-      quote: [
-        `在${person.company}负责${rule.detail}相关体系建设，形成了可复用的工作标准。`,
+    const title = isTechnicalRole ? person.title : isGovernance ? governanceTitles[index] : index < 4 ? role : `${role}相关岗位`;
+    const highlights = isTechnicalRole ? person.highlights : isGovernance ? governanceHighlights[index % governanceHighlights.length] : [`${role}相关经验`, '大型企业项目', index % 2 ? '跨部门协同' : '复杂项目落地'];
+    const fallbackQuotes = [
+        `在${person.company}负责岗位核心体系建设，形成了可复用的工作标准。`,
         `牵头跨部门复杂项目落地，覆盖多个业务单元并建立持续运营机制。`,
         `能够结合大型企业业务场景识别关键问题，并协调业务与技术团队推进。`,
         `项目关键指标提升${20 + index * 2}%，相关成果已在组织内推广应用。`,
-      ][ruleIndex],
-    }));
+    ];
+    const evidence = plan.scoreRules.map((rule, ruleIndex) => {
+      const existing = person.evidence.find((item) => item.label === rule.label) || person.evidence[ruleIndex];
+      return {
+        label: rule.label,
+        value: Math.round(person.score * rule.weight / 100),
+        max: rule.weight,
+        quote: existing?.quote || fallbackQuotes[ruleIndex % fallbackQuotes.length],
+      };
+    });
     return { ...person, title, highlights, risks: [index % 3 === 0 ? '团队管理范围待核实' : index % 3 === 1 ? '行业迁移经验待核实' : '成果口径需进一步确认'], evidence };
   });
 }
 
-function applyMatchStrategy(person, strategy) {
+function recommendationForScore(score, thresholds = defaultPlanThresholds) {
+  if (score >= thresholds.strong) return { status: '强烈推荐', tone: 'green' };
+  if (score >= thresholds.recommended) return { status: '推荐', tone: 'blue' };
+  if (score >= thresholds.review) return { status: '待确认', tone: 'amber' };
+  return { status: '谨慎评估', tone: 'gray' };
+}
+
+function applyMatchStrategy(person, strategy, thresholds) {
   const score = person.evidence.reduce((total, item) => {
     const weight = strategy?.[item.label] ?? item.max;
     return total + (item.value / item.max) * weight;
   }, 0);
-  return { ...person, score: Math.round(score) };
+  const roundedScore = Math.round(score);
+  return { ...person, score: roundedScore, ...recommendationForScore(roundedScore, thresholds) };
 }
 
 function classNames(...values) {
@@ -497,7 +523,10 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false);
 
   const activeTask = tasks.find((item) => item.code === activeTaskId) || tasks[0];
-  const candidatePool = useMemo(() => getCandidates(activeTask).map((person) => applyMatchStrategy(person, matchStrategy)), [activeTask, matchStrategy]);
+  const candidatePool = useMemo(() => {
+    const plan = getRolePlan(activeTask);
+    return getCandidates(activeTask).map((person) => applyMatchStrategy(person, matchStrategy, plan.thresholds));
+  }, [activeTask, matchStrategy]);
   const candidate = candidatePool.find((item) => item.id === selectedCandidate) || candidatePool[0];
   const selectedCandidates = candidateSelections[activeTask?.code] || [];
   const interviewStatuses = interviewStatusByTask[activeTask?.code] || {};
@@ -937,7 +966,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           {flowStep < 2 ? (
             <div className="workspace-gate">
               <span className={classNames('workspace-gate-icon', flowStep === 1 && 'searching')}>{flowStep === 0 ? <FileText size={26} /> : <Search size={26} />}</span>
-              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : '正在检索集团人才库'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与固定评分卡，确认后智能体才会开始检索候选人。' : `正在应用“${activeTask.role}评分卡”提取简历证据并生成可解释排序。`}</p></div>
+              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : '正在检索集团人才库'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : `正在应用“${activeTask.role}评分卡”提取简历证据并生成可解释排序。`}</p></div>
               <div className="workspace-gate-meta"><span><ShieldCheck size={15} />知识与规则已校验</span><span><History size={15} />全过程记录审计日志</span></div>
               {flowStep === 0 ? <button className="btn primary" onClick={() => setView('roleplan')}>审核岗位方案 <ArrowRight size={17} /></button> : <button className="btn secondary" onClick={() => setView('audit')}>查看实时记录 <Activity size={16} /></button>}
             </div>
@@ -1018,6 +1047,7 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
   const [summary, setSummary] = useState(activeTask?.requirement || '负责核心业务工作，持续提升组织效能与业务支撑能力。');
   const [requirements, setRequirements] = useState(activeTask?.planRequirements || generatedPlan.requirements);
   const scoreRules = generatedPlan.scoreRules;
+  const thresholds = generatedPlan.thresholds;
 
   useEffect(() => {
     setEditing(false);
@@ -1028,7 +1058,7 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
   function savePlan() {
     setEditing(false);
     updateActiveTask({ requirement: summary, planRequirements: requirements, planConfirmed: true, stage: activeTask.stage === '岗位方案' ? '人才搜索' : activeTask.stage, progress: activeTask.stage === '岗位方案' ? 30 : activeTask.progress });
-    pushEvent('人工确认岗位方案', '招聘经理确认 JD、任职标准与评分卡 v3.2', 'human');
+    pushEvent('人工确认岗位方案', '招聘经理确认 JD、任职标准与人才推荐评分卡', 'human');
     notify('岗位方案已保存并确认');
     setView('workspace');
   }
@@ -1039,7 +1069,7 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
         eyebrow={`招聘任务 ${activeTask?.code || 'R2026-0718'} / 岗位方案`}
         title={activeTask?.role || '高级后端开发工程师'}
         description={`${activeTask?.dept || '数字科技部'} · ${activeTask?.city || '北京'} · 招聘 ${activeTask?.count || '2人'} · 智能体生成方案待审核`}
-        actions={<><button className="btn secondary" onClick={() => setEditing((value) => !value)}>{editing ? <X size={16} /> : <FileText size={16} />}{editing ? '取消编辑' : '编辑方案'}</button><button className="btn secondary" onClick={() => openDialog('task-edit', { task: activeTask })}><Settings2 size={16} />任务设置</button><button className="btn primary" onClick={savePlan}><CheckCircle2 size={17} />{activeTask.planConfirmed ? '保存岗位方案' : '确认岗位方案'}</button></>}
+        actions={<><button className="btn secondary" onClick={() => setEditing((value) => !value)}>{editing ? <X size={16} /> : <FileText size={16} />}{editing ? '取消编辑' : '编辑JD'}</button><button className="btn secondary" onClick={() => openDialog('task-edit', { task: activeTask })}><Settings2 size={16} />任务设置</button><button className="btn primary" onClick={savePlan}><CheckCircle2 size={17} />{activeTask.planConfirmed ? '保存岗位方案' : '确认岗位方案'}</button></>}
       />
       <section className="plan-source-band">
         <div><Sparkles size={19} /><span><strong>岗位方案由智能体生成</strong><small>融合 6 份岗位资料、18 次历史招聘与 27 条入职后表现记录</small></span></div>
@@ -1052,18 +1082,20 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
             <h3>岗位职责概述</h3>
             {editing ? <textarea value={summary} onChange={(event) => setSummary(event.target.value)} /> : <p>{summary}</p>}
           </div>
-          <div className="document-block">
-            <h3>核心职责</h3>
-            <ol>
-              {generatedPlan.duties.map((item) => <li key={item}>{item}</li>)}
-            </ol>
-          </div>
-          <div className="document-block">
-            <h3>任职要求</h3>
-            <div className="requirement-list">
-              {requirements.map((item, index) => editing ? (
-                <label key={index}><span>{index + 1}</span><input value={item} onChange={(event) => setRequirements((items) => items.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} /></label>
-              ) : <p key={item}><Check size={14} />{item}</p>)}
+          <div className="document-main-grid">
+            <div className="document-block">
+              <h3>核心职责</h3>
+              <ol>
+                {generatedPlan.duties.map((item) => <li key={item}>{item}</li>)}
+              </ol>
+            </div>
+            <div className="document-block">
+              <h3>任职要求</h3>
+              <div className="requirement-list">
+                {requirements.map((item, index) => editing ? (
+                  <label key={index}><span>{index + 1}</span><input value={item} onChange={(event) => setRequirements((items) => items.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} /></label>
+                ) : <p key={item}><Check size={14} />{item}</p>)}
+              </div>
             </div>
           </div>
           <div className="document-block optional-block">
@@ -1073,17 +1105,16 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
         </section>
         <aside className="plan-side">
           <section className="panel scoring-card">
-            <div className="panel-heading"><div><span className="section-kicker">人才推荐标准</span><h2>固定评分卡</h2></div><button className="text-button" onClick={() => openDialog('scorecard')}>查看规则 <Eye size={14} /></button></div>
+            <div className="panel-heading"><div><span className="section-kicker">人才推荐标准</span><h2>岗位评分卡</h2></div><button className="text-button" onClick={() => openDialog('scorecard-edit')}>编辑标准 <Edit3 size={14} /></button></div>
             <div className="score-rule-list">
-              {scoreRules.map((rule) => <div className="score-rule" key={rule.label}><span className="rule-weight">{rule.weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${rule.weight * 2.5}%` }} /></i></div></div>)}
+              {scoreRules.map((rule, index) => <div className="score-rule" key={`${rule.label}-${index}`}><span className="rule-weight">{rule.weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${rule.weight}%` }} /></i></div></div>)}
             </div>
-            <div className="threshold-list"><div><span>强烈推荐</span><strong>≥ 88</strong></div><div><span>推荐</span><strong>80-87</strong></div><div><span>待确认</span><strong>70-79</strong></div></div>
+            <div className="threshold-list"><div><span>强烈推荐</span><strong>≥ {thresholds.strong}</strong></div><div><span>推荐</span><strong>{thresholds.recommended}-{thresholds.strong - 1}</strong></div><div><span>待确认</span><strong>{thresholds.review}-{thresholds.recommended - 1}</strong></div></div>
           </section>
           <section className="panel source-panel">
             <div className="panel-heading"><div><span className="section-kicker">生成依据</span><h2>知识来源</h2></div><button className="icon-button small" onClick={() => setView('knowledge')}><ArrowRight size={16} /></button></div>
-            {generatedPlan.sourceIds.map((id) => knowledge.find((item) => item.id === id && !item.archived)).filter(Boolean).map((item) => <button className="plan-source" key={item.id} onClick={() => openDialog('knowledge', { item })}><FileText size={17} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={14} /></button>)}
+            <div className="plan-source-grid">{generatedPlan.sourceIds.map((id) => knowledge.find((item) => item.id === id && !item.archived)).filter(Boolean).map((item) => <button className="plan-source" key={item.id} onClick={() => openDialog('knowledge', { item })}><FileText size={16} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={13} /></button>)}</div>
           </section>
-          <button className="back-workspace" onClick={() => setView('workspace')}><ArrowLeft size={16} />返回招聘任务工作台</button>
         </aside>
       </div>
     </>
@@ -1247,7 +1278,14 @@ function DetailDialog({ dialog, onClose, context }) {
   if (dialog.type === 'task-edit') { const task = dialog.task || activeTask; return <TaskEditDialog task={task} onClose={onClose} onSave={(changes) => { updateTask(task.code, changes); onClose(); }} onArchive={() => task.archived ? restoreTask(task.code) : archiveTask(task.code)} />; }
   if (dialog.type === 'knowledge') return <KnowledgeDetailDialog item={dialog.item} onClose={onClose} onSave={(changes) => { updateKnowledge(dialog.item.id, { ...changes, updated: localDateString() }); pushEvent('更新知识资料', `${changes.title || dialog.item.title} 已保存新版本`, 'human'); notify('知识资料已更新'); onClose(); }} onArchive={() => dialog.item.archived ? restoreKnowledge(dialog.item.id) : removeKnowledge(dialog.item.id)} />;
   if (dialog.type === 'resume') return <DialogShell title={`${dialog.person.name} · 简历原文`} eyebrow="候选人档案" onClose={onClose} wide actions={<button className="btn primary" onClick={() => { downloadText(`${dialog.person.name}-简历.txt`, buildResumeText(dialog.person)); notify('简历已下载'); }}><Download size={16} />下载简历</button>}><ResumeDocument person={dialog.person} highlight={dialog.highlight} /></DialogShell>;
-  if (dialog.type === 'scorecard') return <DialogShell title="人才匹配评分卡" eyebrow="固定规则" onClose={onClose}><ScorecardDetail task={activeTask} strategy={dialog.strategy || matchStrategy} /></DialogShell>;
+  if (dialog.type === 'scorecard') return <DialogShell title="人才匹配评分卡" eyebrow="当前岗位规则" onClose={onClose}><ScorecardDetail task={activeTask} strategy={dialog.strategy || matchStrategy} /></DialogShell>;
+  if (dialog.type === 'scorecard-edit') return <RoleScorecardDialog task={activeTask} onClose={onClose} onSave={({ rules, thresholds }) => {
+    updateActiveTask({ planScoreRules: rules, planThresholds: thresholds });
+    setMatchStrategy((current) => ({ ...current, ...Object.fromEntries(rules.map((rule) => [rule.label, rule.weight])), minScore: thresholds.review }));
+    pushEvent('调整人才推荐标准', `评分卡更新为 ${rules.length} 个维度，推荐阈值 ${thresholds.review}-${thresholds.strong} 分`, 'human');
+    notify('人才推荐标准已保存，候选人匹配结果已同步更新');
+    onClose();
+  }} />;
   if (dialog.type === 'strategy') return <MatchStrategyDialog task={activeTask} strategy={matchStrategy} onClose={onClose} onSave={(strategy) => { setMatchStrategy(strategy); pushEvent('调整人才匹配策略', `已更新最低匹配阈值 ${strategy.minScore} 分和评分维度权重`, 'human'); notify('匹配策略已保存'); onClose(); }} />;
   if (dialog.type === 'interview-actions') return <InterviewActionDialog person={dialog.person} done={dialog.done} onClose={onClose} onRemind={() => { pushEvent('发送面试提醒', `已向 ${dialog.person.name} 发送在线面试提醒`, 'success'); notify('面试提醒已发送'); }} onDeadline={() => context.openDialog('interview-deadline', { person: dialog.person })} onWithdraw={() => { toggleCandidate(dialog.person.id); setInterviewStatuses((items) => ({ ...items, [dialog.person.id]: '已撤回' })); pushEvent('撤回面试邀请', `${dialog.person.name} 已移出当前面试批次`, 'human'); notify('面试邀请已撤回'); onClose(); }} onTranscript={() => context.openDialog('transcript', { person: dialog.person })} />;
   if (dialog.type === 'interview-deadline') return <InterviewDeadlineDialog person={dialog.person} deadline={activeTask.interviewDeadline} onClose={onClose} onSave={(deadline) => { updateActiveTask({ interviewDeadline: deadline }); pushEvent('更新面试截止时间', `${dialog.person.name} 的面试截止时间调整为 ${deadline}`, 'human'); notify('面试截止时间已更新并通知候选人'); onClose(); }} />;
@@ -1266,6 +1304,68 @@ function InterviewDeadlineDialog({ person, deadline, onClose, onSave }) {
   return <DialogShell title="更新面试截止时间" eyebrow={person.name} onClose={onClose} actions={<><button className="btn secondary" onClick={onClose}>取消</button><button className="btn primary" disabled={!value} onClick={() => onSave(value)}><Send size={16} />保存并通知</button></>}><div className="dialog-form deadline-dialog"><label><span>新的截止日期</span><input autoFocus type="date" value={value} onInput={(event) => setValue(event.currentTarget.value)} /></label><div className="dialog-note"><CalendarDays size={17} />保存后将生成操作记录，并模拟向候选人发送新的截止时间通知。</div></div></DialogShell>;
 }
 
+function RoleScorecardDialog({ task, onClose, onSave }) {
+  const defaults = useMemo(() => getRolePlan({ ...task, planScoreRules: null, planThresholds: null }), [task]);
+  const current = getRolePlan(task);
+  const [rules, setRules] = useState(() => current.scoreRules.map((rule) => ({ ...rule })));
+  const [thresholds, setThresholds] = useState(() => ({ ...current.thresholds }));
+  const total = rules.reduce((sum, rule) => sum + Number(rule.weight || 0), 0);
+  const rulesValid = rules.length >= 2 && rules.every((rule) => rule.label.trim() && rule.detail.trim() && Number(rule.weight) > 0);
+  const thresholdsValid = thresholds.strong <= 100 && thresholds.strong > thresholds.recommended && thresholds.recommended > thresholds.review && thresholds.review >= 0;
+  const valid = total === 100 && rulesValid && thresholdsValid;
+
+  function updateRule(index, changes) {
+    setRules((items) => items.map((rule, ruleIndex) => ruleIndex === index ? { ...rule, ...changes } : rule));
+  }
+
+  function addRule() {
+    if (rules.length >= 6) return;
+    setRules((items) => {
+      const largestIndex = items.reduce((best, rule, index) => rule.weight > items[best].weight ? index : best, 0);
+      const available = Math.min(10, Math.max(5, items[largestIndex].weight - 5));
+      return [...items.map((rule, index) => index === largestIndex ? { ...rule, weight: rule.weight - available } : rule), { label: '新增评价维度', weight: available, detail: '请填写该维度需要核验的能力与证据' }];
+    });
+  }
+
+  function removeRule(index) {
+    if (rules.length <= 2) return;
+    setRules((items) => {
+      const removedWeight = Number(items[index].weight || 0);
+      const remaining = items.filter((_, ruleIndex) => ruleIndex !== index);
+      const largestIndex = remaining.reduce((best, rule, ruleIndex) => rule.weight > remaining[best].weight ? ruleIndex : best, 0);
+      return remaining.map((rule, ruleIndex) => ruleIndex === largestIndex ? { ...rule, weight: rule.weight + removedWeight } : rule);
+    });
+  }
+
+  function reset() {
+    setRules(defaults.scoreRules.map((rule) => ({ ...rule })));
+    setThresholds({ ...defaults.thresholds });
+  }
+
+  const actions = <><button className="btn secondary" onClick={reset}><RefreshCw size={16} />恢复智能体建议</button><button className="btn secondary" onClick={onClose}>取消</button><button className="btn primary" disabled={!valid} onClick={() => onSave({ rules: rules.map((rule) => ({ ...rule, weight: Number(rule.weight) })), thresholds: Object.fromEntries(Object.entries(thresholds).map(([key, value]) => [key, Number(value)])) })}><Save size={16} />保存推荐标准</button></>;
+
+  return <DialogShell title="编辑人才推荐标准" eyebrow={`${task.role} / 岗位评分卡`} onClose={onClose} actions={actions} wide>
+    <div className="scorecard-editor-intro"><SlidersHorizontal size={18} /><div><strong>标准将直接用于候选人排序</strong><p>可修改维度名称、证据口径、权重和推荐阈值。权重合计必须为 100%。</p></div><span className={classNames('scorecard-total-badge', total === 100 ? 'valid' : 'invalid')}>{total}%</span></div>
+    <div className="scorecard-editor-list">
+      {rules.map((rule, index) => <div className="scorecard-editor-row" key={index}>
+        <span className="editor-index">{String(index + 1).padStart(2, '0')}</span>
+        <label><span>评价维度</span><input value={rule.label} onChange={(event) => updateRule(index, { label: event.target.value })} /></label>
+        <label className="evidence-input"><span>证据口径</span><input value={rule.detail} onChange={(event) => updateRule(index, { detail: event.target.value })} /></label>
+        <label className="weight-input"><span>权重</span><span><input type="number" min="5" max="80" step="5" value={rule.weight} onChange={(event) => updateRule(index, { weight: Number(event.target.value) })} /><em>%</em></span></label>
+        <button className="icon-button small danger-icon" title="删除维度" disabled={rules.length <= 2} onClick={() => removeRule(index)}><Trash2 size={15} /></button>
+      </div>)}
+    </div>
+    <button className="add-score-rule" disabled={rules.length >= 6} onClick={addRule}><Plus size={15} />增加评价维度</button>
+    <div className="threshold-editor">
+      <div><span className="section-kicker">推荐等级</span><h3>设置分数阈值</h3><p>系统会自动生成连续区间，并同步到人才匹配列表。</p></div>
+      <label><span>强烈推荐</span><div><em>≥</em><input type="number" min="1" max="100" value={thresholds.strong} onChange={(event) => setThresholds((items) => ({ ...items, strong: Number(event.target.value) }))} /></div></label>
+      <label><span>推荐起点</span><div><em>≥</em><input type="number" min="1" max="99" value={thresholds.recommended} onChange={(event) => setThresholds((items) => ({ ...items, recommended: Number(event.target.value) }))} /></div></label>
+      <label><span>待确认起点</span><div><em>≥</em><input type="number" min="0" max="98" value={thresholds.review} onChange={(event) => setThresholds((items) => ({ ...items, review: Number(event.target.value) }))} /></div></label>
+    </div>
+    {!valid && <div className="scorecard-editor-error"><AlertTriangle size={16} /><span>{total !== 100 ? `当前权重合计 ${total}%，请调整为 100%。` : !thresholdsValid ? '推荐阈值应满足：强烈推荐 > 推荐 > 待确认。' : '请完整填写每个评价维度及证据口径。'}</span></div>}
+  </DialogShell>;
+}
+
 function MatchStrategyDialog({ task, strategy, onClose, onSave }) {
   const rules = getRolePlan(task).scoreRules;
   const [weights, setWeights] = useState(() => Object.fromEntries(rules.map((rule) => [rule.label, strategy[rule.label] ?? rule.weight])));
@@ -1276,7 +1376,7 @@ function MatchStrategyDialog({ task, strategy, onClose, onSave }) {
     if (total !== 100) return;
     onSave({ ...strategy, ...weights, minScore: Number(minScore), sort });
   }
-  return <DialogShell title="调整匹配策略" eyebrow={`${task.role} / 人才搜索`} onClose={onClose} actions={<><button className="btn secondary" onClick={() => { setWeights(Object.fromEntries(rules.map((rule) => [rule.label, rule.weight]))); setMinScore(70); setSort('score'); }}>恢复默认</button><button className="btn primary" disabled={total !== 100} onClick={save}><Save size={16} />保存策略</button></>}><div className="strategy-intro"><SlidersHorizontal size={18} /><span><strong>固定评分 + 可解释证据</strong><small>权重合计必须为 100%，调整后会重新计算当前任务的匹配分与排序。</small></span></div><div className="strategy-weights">{rules.map((rule) => <label key={rule.label}><span><strong>{rule.label}</strong><small>{rule.detail}</small></span><input type="range" min="0" max="60" step="5" value={weights[rule.label]} onChange={(event) => setWeights((items) => ({ ...items, [rule.label]: Number(event.target.value) }))} /><b>{weights[rule.label]}%</b></label>)}</div><div className={classNames('strategy-total', total === 100 ? 'valid' : 'invalid')}><span>权重合计</span><strong>{total}%</strong><small>{total === 100 ? '可保存' : '请调整为 100%'}</small></div><div className="form-grid dialog-form strategy-options"><label><span>最低匹配分</span><select value={minScore} onChange={(e) => setMinScore(e.target.value)}><option value="60">60 分</option><option value="70">70 分</option><option value="80">80 分</option><option value="85">85 分</option></select></label><label><span>默认排序</span><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="score">综合匹配度</option><option value="name">候选人姓名</option></select></label></div></DialogShell>;
+  return <DialogShell title="调整匹配策略" eyebrow={`${task.role} / 人才搜索`} onClose={onClose} actions={<><button className="btn secondary" onClick={() => { setWeights(Object.fromEntries(rules.map((rule) => [rule.label, rule.weight]))); setMinScore(getRolePlan(task).thresholds.review); setSort('score'); }}>恢复默认</button><button className="btn primary" disabled={total !== 100} onClick={save}><Save size={16} />保存策略</button></>}><div className="strategy-intro"><SlidersHorizontal size={18} /><span><strong>固定评分 + 可解释证据</strong><small>权重合计必须为 100%，调整后会重新计算当前任务的匹配分与排序。</small></span></div><div className="strategy-weights">{rules.map((rule) => <label key={rule.label}><span><strong>{rule.label}</strong><small>{rule.detail}</small></span><input type="range" min="0" max="60" step="5" value={weights[rule.label]} onChange={(event) => setWeights((items) => ({ ...items, [rule.label]: Number(event.target.value) }))} /><b>{weights[rule.label]}%</b></label>)}</div><div className={classNames('strategy-total', total === 100 ? 'valid' : 'invalid')}><span>权重合计</span><strong>{total}%</strong><small>{total === 100 ? '可保存' : '请调整为 100%'}</small></div><div className="form-grid dialog-form strategy-options"><label><span>最低匹配分</span><select value={minScore} onChange={(e) => setMinScore(e.target.value)}>{[...new Set([60, 70, 80, 85, Number(minScore)])].sort((a, b) => a - b).map((score) => <option value={score} key={score}>{score} 分</option>)}</select></label><label><span>默认排序</span><select value={sort} onChange={(e) => setSort(e.target.value)}><option value="score">综合匹配度</option><option value="name">候选人姓名</option></select></label></div></DialogShell>;
 }
 
 function TaskEditDialog({ task, onClose, onSave, onArchive }) {
@@ -1309,7 +1409,7 @@ function ResumeDocument({ person, highlight }) {
 
 function ScorecardDetail({ task, strategy }) {
   const plan = getRolePlan(task);
-  return <><div className="scorecard-total"><span>总分</span><strong>100</strong><small>固定规则，AI仅提取证据</small></div><div className="score-rule-list dialog-rules">{plan.scoreRules.map((rule) => { const weight = strategy?.[rule.label] ?? rule.weight; return <div className="score-rule" key={rule.label}><span className="rule-weight">{weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${weight * 2.5}%` }} /></i></div></div>; })}</div><div className="dialog-note"><ShieldCheck size={17} />每项得分必须关联简历或面试原文；信息不足时标记待核实，不自动推断。</div></>;
+  return <><div className="scorecard-total"><span>总分</span><strong>100</strong><small>规则由招聘负责人维护，AI仅提取证据</small></div><div className="score-rule-list dialog-rules">{plan.scoreRules.map((rule) => { const weight = strategy?.[rule.label] ?? rule.weight; return <div className="score-rule" key={rule.label}><span className="rule-weight">{weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${weight}%` }} /></i></div></div>; })}</div><div className="dialog-note"><ShieldCheck size={17} />每项得分必须关联简历或面试原文；信息不足时标记待核实，不自动推断。</div></>;
 }
 
 function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, candidatePool, toggleCandidate, setView, notify, pushEvent, activeTask, updateActiveTask, setInterviewStatuses, matchStrategy, openDialog }) {
@@ -1347,7 +1447,7 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
       </section>
       <div className="talent-layout">
         <section className="candidate-list-panel">
-          <div className="list-toolbar"><label className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索候选人、技能或公司" /></label><label className="mini-select" title="最低匹配分"><select value={minScore} onChange={(event) => setMinScore(event.target.value)}><option value="60">60分+</option><option value="70">70分+</option><option value="80">80分+</option><option value="85">85分+</option></select></label></div>
+          <div className="list-toolbar"><label className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索候选人、技能或公司" /></label><label className="mini-select" title="最低匹配分"><select value={minScore} onChange={(event) => setMinScore(event.target.value)}>{[...new Set([60, 70, 80, 85, Number(minScore)])].sort((a, b) => a - b).map((score) => <option value={score} key={score}>{score}分+</option>)}</select></label></div>
           <div className="selection-note"><span>推荐候选人 · {filteredCandidates.length} 人</span><button className={onlySelected ? 'selected-filter' : ''} onClick={() => setOnlySelected((value) => !value)}>{onlySelected ? '显示全部' : `已选择 ${selectedCandidates.length}`}</button></div>
           <div className="candidate-list">
             {filteredCandidates.map((person, index) => (
