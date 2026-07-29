@@ -747,7 +747,7 @@ function App() {
       <Sidebar view={view} setView={setView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />
       <div className="app-column">
         <Topbar setView={setView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />
-        <main className="main-content">
+        <main className={classNames('main-content', `view-${view}`)}>
           {view === 'workspace' && <Workspace {...context} />}
           {view === 'roleplan' && <RolePlan {...context} />}
           {view === 'tasks' && <Tasks {...context} />}
@@ -858,7 +858,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
     已完成: '任务已完成，等待招聘结果回流',
   }[activeTask.stage];
   const taskEvents = events.filter((event) => event.taskId === activeTask.code);
-  const activityFeed = taskEvents.slice(0, 4);
+  const activityFeed = taskEvents.slice(0, 3);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [activityCursor, setActivityCursor] = useState(0);
   useEffect(() => {
