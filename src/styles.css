@@ -657,15 +657,26 @@ button.table-row:hover { background: #fafcfc; }
 .draft-heading > div { display: grid; gap: 1px; }
 .draft-heading strong { font-size: 10px; }
 .draft-heading small { color: var(--muted); font-size: 8px; }
-.draft-role { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 13px 0 10px; }
-.draft-role strong { font-size: 16px; }
-.draft-role span { color: var(--muted); font-size: 9px; text-align: right; }
-.draft-facts { display: grid; grid-template-columns: repeat(3,1fr); margin-bottom: 10px; padding: 9px 0; background: #f6f9f9; border-top: 1px solid #edf1f2; border-bottom: 1px solid #edf1f2; }
-.draft-facts span { display: grid; gap: 2px; padding: 0 9px; border-right: 1px solid var(--line); }
-.draft-facts span:last-child { border-right: 0; }
-.draft-facts small { color: var(--muted); font-size: 8px; }
-.draft-facts strong { font-size: 10px; }
-.generated-task-draft > p { margin: 0; color: #586973; font-size: 9px; line-height: 1.6; }
+.draft-role { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 0 10px; }
+.draft-role > span { display: grid; gap: 3px; }
+.draft-role small, .draft-requirement > small { color: var(--muted); font-size: 8px; }
+.draft-role strong { font-size: 17px; }
+.draft-role > em { padding: 3px 7px; color: #267660; background: #e9f6f0; border-radius: 3px; font-size: 8px; font-style: normal; font-weight: 700; }
+.draft-role > em.inferred { color: #9a6715; background: #fff4dc; }
+.draft-detail-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid #e4eaec; border-width: 1px 0 0 1px; }
+.draft-detail-grid > div { min-width: 0; display: grid; gap: 5px; padding: 9px 10px; background: #f8fafb; border: 1px solid #e4eaec; border-width: 0 1px 1px 0; }
+.draft-detail-grid > div.inferred { background: #fffaf0; }
+.draft-detail-grid span { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.draft-detail-grid small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.draft-detail-grid em { flex: 0 0 auto; color: #a16a12; font-size: 7px; font-style: normal; }
+.draft-detail-grid strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.draft-requirement { margin-top: 10px; }
+.draft-requirement p { margin: 4px 0 0; color: #586973; font-size: 9px; line-height: 1.6; }
+.draft-missing { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 9px 10px; color: #875c18; background: #fff7e8; border: 1px solid #f1dfba; border-radius: 4px; }
+.draft-missing > svg { flex: 0 0 auto; margin-top: 1px; }
+.draft-missing div { display: grid; gap: 2px; }
+.draft-missing strong { font-size: 9px; }
+.draft-missing p { margin: 0; color: #926d32; font-size: 8px; line-height: 1.5; }
 .chat-composer { position: relative; padding: 12px 21px; background: white; border-top: 1px solid var(--line); }
 .chat-composer textarea { width: 100%; min-height: 72px; max-height: 130px; resize: vertical; padding: 10px 45px 10px 11px; color: var(--ink); font: 11px/1.6 inherit; background: white; border: 1px solid var(--line-strong); border-radius: 5px; outline: 0; }
 .chat-composer textarea:focus { border-color: #80a9b2; box-shadow: 0 0 0 2px rgba(36,126,141,.08); }
@@ -821,11 +832,7 @@ button.table-row:hover { background: #fafcfc; }
   .task-chat-body { min-height: 220px; padding: 15px 13px 7px; }
   .chat-message p { max-width: 85%; }
   .generated-task-draft { margin-left: 0; padding: 12px; }
-  .draft-role { align-items: flex-start; flex-direction: column; gap: 3px; }
-  .draft-role span { text-align: left; }
-  .draft-facts { grid-template-columns: 1fr; }
-  .draft-facts span { padding: 7px 9px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .draft-facts span:last-child { border-bottom: 0; }
+  .draft-detail-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .chat-composer { padding: 10px 13px; }
   .chat-send { right: 22px; bottom: 20px; }
   .audit-event { grid-template-columns: 28px minmax(0,1fr); }

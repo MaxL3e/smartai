@@ -265,15 +265,27 @@ function inferTaskFromPrompt(prompt, previous = {}) {
   const departments = ['数字科技部', '财务管理部', '战略发展部', '法律合规部', '组织人事部', '人才发展中心', '招聘中心'];
   const cities = ['北京', '上海', '深圳', '广州', '杭州', '南京', '成都', '武汉', '西安', '天津', '重庆', '苏州'];
   const numberMap = { 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  const normalizedPrompt = prompt.trim().replace(/[。！!？?]+$/, '');
   const countMatch = prompt.match(/([1-9]\d*|[一两二三四五六七八九十])\s*(?:名|位|人)/);
-  const roleMatch = prompt.match(/(?:紧急招聘|招聘|招募|寻找|拟招|急招|招)\s*(?:(?:[1-9]\d*|[一两二三四五六七八九十])\s*(?:名|位|人|个)?|一名|一位|一个)?\s*([^，。；,;]{2,24}?)(?=，|。|；|,|;|要求|负责|工作地点|到岗|$)/);
+  const actionTail = prompt.match(/(?:紧急招聘|招聘|招募|寻找|拟招|急招|招)\s*([^，。；,;]{0,32})/)?.[1]?.trim() || '';
+  const actionRole = actionTail
+    .replace(/^(?:[1-9]\d*|[一两二三四五六七八九十])\s*(?:名|位|人|个)?\s*/, '')
+    .replace(/\s*(?:[1-9]\d*|[一两二三四五六七八九十])\s*(?:名|位|人)\s*$/, '')
+    .trim();
+  const validActionRole = actionRole && !/^(希望|要求|计划|预计|完成|到岗|在|于)/.test(actionRole) ? actionRole : '';
   const explicitRole = prompt.match(/(?:岗位(?:名称)?(?:是|为|：|:))\s*([^，。；,;]{2,24})/);
-  const role = (explicitRole?.[1] || roleMatch?.[1] || previous.role || '待确认岗位').trim().replace(/^(在|一名|一位|一个)/, '').replace(/岗位$/, '') || '待确认岗位';
-  const department = departments.find((item) => prompt.includes(item)) || previous.dept || '组织人事部';
-  const city = cities.find((item) => prompt.includes(item)) || previous.city || '北京';
+  const conciseRole = normalizedPrompt.match(/^([^，。；,;\s]{2,18}(?:经理|主管|专员|专家|工程师|分析师|顾问|总监|负责人|设计师|架构师|研究员|技术员|销售|客服|会计|法务|审计|运营))(?:\s|，|。|；|,|;|$)/);
+  const roleCandidate = explicitRole?.[1] || validActionRole || conciseRole?.[1];
+  const role = (roleCandidate || previous.role || '待确认岗位').trim().replace(/^(在|一名|一位|一个)/, '').replace(/岗位$/, '') || '待确认岗位';
+  const detectedDepartment = departments.find((item) => prompt.includes(item)) || prompt.match(/([\u4e00-\u9fa5A-Za-z0-9]{2,12}(?:事业部|分公司|研究院|中心|部门|部))/)?.[1];
+  const detectedCity = cities.find((item) => prompt.includes(item));
+  const department = detectedDepartment || previous.dept || '组织人事部';
+  const city = detectedCity || previous.city || '北京';
   const headcount = countMatch ? (Number(countMatch[1]) || numberMap[countMatch[1]] || 1) : previous.headcount || 1;
-  const recruitmentType = /校招|校园招聘|应届/.test(prompt) ? '校园招聘' : /内招|内部竞聘|内部招聘/.test(prompt) ? '内部竞聘' : previous.recruitmentType || '社会招聘';
-  const priority = /紧急|尽快|急招|高优/.test(prompt) ? '高' : /低优|不着急/.test(prompt) ? '低' : previous.priority || '中';
+  const recruitmentTypeMatch = /校招|校园招聘|应届/.test(prompt) ? '校园招聘' : /内招|内部竞聘|内部招聘/.test(prompt) ? '内部竞聘' : /社招|社会招聘/.test(prompt) ? '社会招聘' : '';
+  const recruitmentType = recruitmentTypeMatch || previous.recruitmentType || '社会招聘';
+  const priorityMatch = /紧急|尽快|急招|高优/.test(prompt) ? '高' : /低优|不着急/.test(prompt) ? '低' : /普通|常规|中优/.test(prompt) ? '中' : '';
+  const priority = priorityMatch || previous.priority || '中';
   const now = new Date();
   let due = previous.due || localDateString(addDays(now, 30));
   const fullDate = prompt.match(/(20\d{2})[年\-/\.](\d{1,2})[月\-/\.](\d{1,2})日?/);
@@ -290,6 +302,16 @@ function inferTaskFromPrompt(prompt, previous = {}) {
   } else if (/两周|14天/.test(prompt)) due = localDateString(addDays(now, 14));
   else if (/一周|7天/.test(prompt)) due = localDateString(addDays(now, 7));
   else if (/下个月/.test(prompt)) due = localDateString(addDays(now, 30));
+  const confirmedFields = {
+    ...(previous.confirmedFields || {}),
+    role: Boolean(roleCandidate) || previous.confirmedFields?.role || false,
+    dept: Boolean(detectedDepartment) || previous.confirmedFields?.dept || false,
+    city: Boolean(detectedCity) || previous.confirmedFields?.city || false,
+    headcount: Boolean(countMatch) || previous.confirmedFields?.headcount || false,
+    recruitmentType: Boolean(recruitmentTypeMatch) || previous.confirmedFields?.recruitmentType || false,
+    priority: Boolean(priorityMatch) || previous.confirmedFields?.priority || false,
+    due: Boolean(fullDate || monthDay || monthEnd || /两周|14天|一周|7天|下个月/.test(prompt)) || previous.confirmedFields?.due || false,
+  };
   return {
     role,
     dept: department,
@@ -300,6 +322,7 @@ function inferTaskFromPrompt(prompt, previous = {}) {
     due,
     requirement: [previous.requirement, prompt].filter(Boolean).join('；').slice(-500),
     useKnowledge: !/不使用知识库|不用知识库/.test(prompt),
+    confirmedFields,
   };
 }
 
@@ -1116,8 +1139,16 @@ function TaskModal({ onClose, onSubmit }) {
     const timer = window.setTimeout(() => {
       const nextDraft = inferTaskFromPrompt(pending, draft || {});
       const complete = nextDraft.role !== '待确认岗位';
+      const missingLabels = [
+        ['dept', '需求部门'],
+        ['city', '工作地点'],
+        ['headcount', '招聘人数'],
+        ['recruitmentType', '招聘类型'],
+        ['priority', '优先级'],
+        ['due', '完成时间'],
+      ].filter(([key]) => !nextDraft.confirmedFields?.[key]).map(([, label]) => label);
       setDraft(nextDraft);
-      setMessages((items) => [...items, { id: Date.now(), role: 'assistant', text: complete ? `已整理出“${nextDraft.role}”招聘任务草案，你可以继续补充，或确认创建。` : '我还没有识别出明确的岗位名称，请再告诉我具体要招聘什么岗位。' }]);
+      setMessages((items) => [...items, { id: Date.now(), role: 'assistant', text: complete ? missingLabels.length ? `已识别“${nextDraft.role}”。${missingLabels.join('、')}暂使用演示默认值，你可以继续补充，或直接确认后在岗位方案中调整。` : `“${nextDraft.role}”招聘任务信息已整理完整，请核对草案后确认创建。` : '我还没有识别出明确的岗位名称，请再告诉我具体要招聘什么岗位。' }]);
       setPending('');
     }, 520);
     return () => window.clearTimeout(timer);
@@ -1133,6 +1164,16 @@ function TaskModal({ onClose, onSubmit }) {
   }
 
   const canCreate = draft && draft.role !== '待确认岗位' && !pending;
+  const draftFields = draft ? [
+    ['需求部门', draft.dept, 'dept'],
+    ['工作地点', draft.city, 'city'],
+    ['招聘人数', `${draft.headcount}人`, 'headcount'],
+    ['招聘类型', draft.recruitmentType, 'recruitmentType'],
+    ['优先级', draft.priority, 'priority'],
+    ['期望完成', draft.due, 'due'],
+    ['知识库', draft.useKnowledge ? '已启用' : '不使用', 'useKnowledge'],
+  ] : [];
+  const missingFields = draftFields.filter(([, , key]) => key !== 'useKnowledge' && !draft?.confirmedFields?.[key]);
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="modal task-modal task-chat-modal" role="dialog" aria-modal="true" aria-label="对话创建招聘任务" onMouseDown={(event) => event.stopPropagation()}>
@@ -1146,10 +1187,14 @@ function TaskModal({ onClose, onSubmit }) {
             {pending && <div className="chat-message assistant"><span className="chat-avatar"><Bot size={17} /></span><p className="thinking-dots"><i /><i /><i /></p></div>}
           </div>
           {draft && <section className="generated-task-draft">
-            <div className="draft-heading"><span><Sparkles size={17} /></span><div><strong>招聘任务草案</strong><small>{draft.role === '待确认岗位' ? '等待补充岗位名称' : '已从对话中自动整理'}</small></div><StatusPill tone={draft.role === '待确认岗位' ? 'amber' : 'green'}>{draft.role === '待确认岗位' ? '信息不足' : '可确认'}</StatusPill></div>
-            <div className="draft-role"><strong>{draft.role}</strong><span>{draft.dept} · {draft.city} · {draft.recruitmentType} {draft.headcount}人</span></div>
-            <div className="draft-facts"><span><small>优先级</small><strong>{draft.priority}</strong></span><span><small>期望完成</small><strong>{draft.due}</strong></span><span><small>知识库</small><strong>{draft.useKnowledge ? '已启用' : '不使用'}</strong></span></div>
-            <p>{draft.requirement}</p>
+            <div className="draft-heading"><span><Sparkles size={17} /></span><div><strong>招聘任务草案</strong><small>{draft.role === '待确认岗位' ? '等待补充岗位名称' : '请核对智能体整理结果'}</small></div><StatusPill tone={draft.role === '待确认岗位' || missingFields.length ? 'amber' : 'green'}>{draft.role === '待确认岗位' ? '信息不足' : missingFields.length ? `待确认 ${missingFields.length}项` : '可确认'}</StatusPill></div>
+            <div className="draft-role"><span><small>招聘岗位</small><strong>{draft.role}</strong></span><em className={draft.confirmedFields?.role ? 'confirmed' : 'inferred'}>{draft.confirmedFields?.role ? '已识别' : '待补充'}</em></div>
+            <div className="draft-detail-grid">{draftFields.map(([label, value, key]) => {
+              const confirmed = key === 'useKnowledge' || draft.confirmedFields?.[key];
+              return <div className={confirmed ? '' : 'inferred'} key={key}><span><small>{label}</small>{!confirmed && <em>智能体暂填</em>}</span><strong>{value}</strong></div>;
+            })}</div>
+            <div className="draft-requirement"><small>已理解的需求</small><p>{draft.requirement}</p></div>
+            {draft.role !== '待确认岗位' && missingFields.length > 0 && <div className="draft-missing"><AlertTriangle size={17} /><div><strong>还有 {missingFields.length} 项建议确认</strong><p>{missingFields.map(([label]) => label).join('、')}当前使用演示默认值，可继续在下方对话中补充。</p></div></div>}
           </section>}
         </div>
         <form className="chat-composer" onSubmit={send}>
