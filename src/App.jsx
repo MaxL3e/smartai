@@ -1521,7 +1521,7 @@ function Interviews({ selectedCandidates, candidatePool, selectedCandidate, setS
   }
   const completedCount = interviewees.filter((person) => interviewStatuses[person.id] === '已完成').length;
   const deadline = activeTask.interviewDeadline || '2026-07-25';
-  const deadlineLabel = `${deadline.slice(5, 7)}月${deadline.slice(8, 10)}日`;
+  const deadlineLabel = interviewees.length ? `${deadline.slice(5, 7)}月${deadline.slice(8, 10)}日` : '待创建';
   function openEvaluation(personId = selectedCandidate) {
     if (!completedCount) {
       notify('至少需要回收一份面试结果后才能生成综合评价');
@@ -1539,7 +1539,7 @@ function Interviews({ selectedCandidates, candidatePool, selectedCandidate, setS
   return (
     <>
       <PageHeader eyebrow={`${activeTask.code} / 在线面试`} title="面试协同" description="智能体负责邀约、提醒、结果回收与结构化评价；招聘负责人掌握关键决策"
-        actions={<button className="btn primary" disabled={!completedCount} onClick={() => openEvaluation()}><BadgeCheck size={17} />查看综合评价</button>} />
+        actions={<button className="btn primary" disabled={!completedCount} title={completedCount ? '查看综合评价' : '至少完成一位候选人的面试后可用'} onClick={() => openEvaluation()}><BadgeCheck size={17} />查看综合评价</button>} />
       <div className="interview-overview">
         <div><span className="overview-icon blue"><Send size={19} /></span><span><small>已发送邀请</small><strong>{interviewees.length}</strong></span></div>
         <div><span className="overview-icon green"><CheckCircle2 size={19} /></span><span><small>已完成</small><strong>{completedCount}</strong></span></div>
@@ -1547,7 +1547,7 @@ function Interviews({ selectedCandidates, candidatePool, selectedCandidate, setS
         <div><span className="overview-icon gray"><CalendarDays size={19} /></span><span><small>最晚完成</small><strong className="date-strong">{deadlineLabel}</strong></span></div>
       </div>
       <section className="interview-list">
-        <div className="panel-heading"><div><span className="section-kicker">在线面试批次</span><h2>{activeTask.role} · 第一批次</h2></div><button className="btn secondary" onClick={remindAll}><Send size={16} />批量提醒</button></div>
+        <div className="panel-heading"><div><span className="section-kicker">在线面试批次</span><h2>{interviewees.length ? `${activeTask.role} · 第一批次` : '尚未创建面试批次'}</h2></div><button className="btn secondary" disabled={!interviewees.length || completedCount === interviewees.length} title={!interviewees.length ? '请先确认面试候选人' : completedCount === interviewees.length ? '当前批次已全部完成' : '提醒未完成候选人'} onClick={remindAll}><Send size={16} />批量提醒</button></div>
         {interviewees.map((person, index) => {
           const done = interviewStatuses[person.id] === '已完成';
           return (
@@ -1563,8 +1563,8 @@ function Interviews({ selectedCandidates, candidatePool, selectedCandidate, setS
             </article>
           );
         })}
+        {!interviewees.length && <div className="empty-state interview-empty"><UsersRound size={24} /><strong>尚未选择面试候选人</strong><span>请先在人才匹配页面确认候选名单。</span><button className="btn primary" onClick={() => setView('talent')}>前往人才匹配</button></div>}
       </section>
-      {!interviewees.length && <section className="empty-state interview-empty"><UsersRound size={24} /><strong>尚未选择面试候选人</strong><span>请先在人才匹配页面确认候选名单。</span><button className="btn primary" onClick={() => setView('talent')}>前往人才匹配</button></section>}
       <section className="guardrail-band"><LockKeyhole size={20} /><div><strong>智能体执行边界</strong><p>邀请发送、状态提醒和结果回收可自动完成；面试评价仅作为决策参考，进入下一轮与最终录用必须由招聘负责人确认。</p></div><button className="text-button" onClick={() => openDialog('rules')}>查看规则</button></section>
     </>
   );
@@ -1574,7 +1574,7 @@ function Evaluation({ setView, notify, pushEvent, activeTask, candidatePool, sel
   const eligible = candidatePool.filter((item) => selectedCandidates.includes(item.id) && interviewStatuses[item.id] === '已完成');
   const person = eligible.find((item) => item.id === selectedCandidate) || eligible[0];
   if (!person) {
-    return <><PageHeader eyebrow={`${activeTask.code} / 综合评价`} title="候选人综合评价" description="面试结果回收后，智能体将在这里生成可解释的综合评价" /><section className="empty-state interview-empty"><BadgeCheck size={24} /><strong>暂无可评价的候选人</strong><span>请先完成至少一位候选人的在线面试。</span><button className="btn primary" onClick={() => setView('interviews')}>返回面试协同</button></section></>;
+    return <><PageHeader eyebrow={`${activeTask.code} / 综合评价`} title="候选人综合评价" description="面试结果回收后，智能体将在这里生成可解释的综合评价" /><section className="empty-state interview-empty evaluation-empty"><BadgeCheck size={24} /><strong>暂无可评价的候选人</strong><span>请先完成至少一位候选人的在线面试。</span><button className="btn primary" onClick={() => setView('interviews')}>返回面试协同</button></section></>;
   }
   const decisionKey = `${activeTask.code}-${person.id}`;
   const decision = evaluationDecisions[decisionKey];
