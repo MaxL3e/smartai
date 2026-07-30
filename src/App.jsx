@@ -951,7 +951,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
             const completed = index < flowStep;
             const active = index === flowStep;
             return (
-              <button className={classNames('flow-step', completed && 'completed', active && 'current')} key={step.title} onClick={() => { if (index === 0) setView('roleplan'); if (index === 1 || index === 2) setView('talent'); if (index === 3) setView('interviews'); if (index === 4) setView('evaluation'); }}>
+              <button type="button" aria-current={active ? 'step' : undefined} aria-label={`${step.title}，${completed ? step.completedNote : active ? step.activeNote : step.pendingNote}`} className={classNames('flow-step', completed && 'completed', active && 'current')} key={step.title} onClick={() => { if (index === 0) setView('roleplan'); if (index === 1 || index === 2) setView('talent'); if (index === 3) setView('interviews'); if (index === 4) setView('evaluation'); }}>
                 <div className="step-line" />
                 <span className="step-dot">{completed ? <Check size={14} /> : index + 1}</span>
                 <div><strong>{step.title}</strong><small>{completed ? step.completedNote : active ? step.activeNote : step.pendingNote}</small></div>
