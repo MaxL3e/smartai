@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -801,6 +801,21 @@ function App() {
 }
 
 function Sidebar({ view, setView, taskCount, interviewCount, onProfile, profileOpen }) {
+  const profileAreaRef = useRef(null);
+  useEffect(() => {
+    if (!profileOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!profileAreaRef.current?.contains(event.target)) onProfile();
+    };
+    window.addEventListener('pointerdown', closeOnOutsideClick);
+    return () => window.removeEventListener('pointerdown', closeOnOutsideClick);
+  }, [profileOpen, onProfile]);
+
+  const openProfileView = (nextView) => {
+    setView(nextView);
+    onProfile();
+  };
+
   return (
     <aside className="sidebar">
       <button className="brand" onClick={() => setView('workspace')} aria-label="返回工作台">
@@ -820,12 +835,14 @@ function Sidebar({ view, setView, taskCount, interviewCount, onProfile, profileO
           <ShieldCheck size={18} />
           <span><strong>安全运行</strong><small>全部操作已留痕</small></span>
         </div>
-        <button className="user-menu" onClick={onProfile} aria-expanded={profileOpen}>
-          <span className="avatar avatar-blue">李</span>
-          <span><strong>李佳</strong><small>招聘经理</small></span>
-          <MoreHorizontal size={17} />
-        </button>
-        {profileOpen && <div className="profile-menu"><button onClick={() => setView('audit')}><UserRound size={15} />个人操作记录</button><button onClick={() => setView('knowledge')}><Settings2 size={15} />知识库管理</button><span>演示账号 · 数据仅保存在本机</span></div>}
+        <div className="user-menu-wrap" ref={profileAreaRef}>
+          <button className="user-menu" onClick={onProfile} aria-expanded={profileOpen} aria-haspopup="menu">
+            <span className="avatar avatar-blue">李</span>
+            <span><strong>李佳</strong><small>招聘经理</small></span>
+            <MoreHorizontal size={17} />
+          </button>
+          {profileOpen && <div className="profile-menu" role="menu"><button role="menuitem" onClick={() => openProfileView('audit')}><UserRound size={15} />个人操作记录</button><button role="menuitem" onClick={() => openProfileView('knowledge')}><Settings2 size={15} />知识库管理</button><span>演示账号 · 数据仅保存在本机</span></div>}
+        </div>
       </div>
     </aside>
   );

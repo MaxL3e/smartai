@@ -58,6 +58,7 @@ button { cursor: pointer; }
 .secure-note small, .user-menu small { color: #8299a7; font-size: 10px; }
 .user-menu { width: 100%; display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 7px 8px; text-align: left; color: #9fb0bb; background: transparent; border: 0; border-radius: 5px; }
 .user-menu:hover { background: rgba(255,255,255,.05); }
+.user-menu-wrap { width: 100%; position: relative; }
 .avatar { width: 34px; height: 34px; display: inline-grid; place-items: center; flex: 0 0 auto; color: #173549; font-size: 13px; font-style: normal; font-weight: 700; background: #d8e8ea; border-radius: 50%; }
 .avatar-blue, .avatar-2 { color: #284f6f; background: #dbeaf5; }
 .avatar-1 { color: #47603e; background: #e4eddb; }
@@ -495,7 +496,8 @@ button.table-row:hover { background: #fafcfc; }
 .notification-item strong { font-size: 10px; }
 .notification-item p { overflow: hidden; margin: 0; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .notification-item small { color: var(--soft); font-size: 8px; }
-.profile-menu { position: absolute; right: 11px; bottom: 60px; width: 190px; display: grid; padding: 5px; color: var(--ink); background: white; border: 1px solid #d8e2e6; border-radius: 6px; box-shadow: 0 14px 34px rgba(5,22,31,.22); }
+.profile-menu { width: 210px; position: absolute; z-index: 30; bottom: 0; left: calc(100% + 10px); display: grid; padding: 5px; color: var(--ink); background: white; border: 1px solid #d8e2e6; border-radius: 6px; box-shadow: 0 14px 34px rgba(5,22,31,.22); }
+.profile-menu::before { width: 9px; height: 9px; position: absolute; bottom: 16px; left: -5px; content: ''; background: white; border-bottom: 1px solid #d8e2e6; border-left: 1px solid #d8e2e6; transform: rotate(45deg); }
 .profile-menu button { display: flex; align-items: center; gap: 8px; padding: 9px; color: #314650; font-size: 10px; text-align: left; background: none; border: 0; border-radius: 4px; }
 .profile-menu button:hover { color: var(--cyan); background: #f1f8f8; }
 .profile-menu span { padding: 7px 9px 3px; color: var(--muted); font-size: 8px; border-top: 1px solid var(--line); }
