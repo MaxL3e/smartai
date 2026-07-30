@@ -198,20 +198,6 @@ kbd { padding: 2px 5px; color: #7b8790; font: 10px inherit; background: white; b
 .activity-empty { display: flex; align-items: center; gap: 7px; padding: 13px 0; color: var(--muted); font-size: 9px; }
 .full-link { width: 100%; min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--cyan); font-size: 10px; background: #fafcfc; border: 0; border-top: 1px solid var(--line); }
 
-.knowledge-citations { min-height: 60px; display: grid; grid-template-columns: minmax(180px,.7fr) minmax(350px,1.3fr) auto; align-items: center; gap: 16px; margin-top: 12px; padding: 9px 14px; background: #edf2f3; border: 1px solid #dae3e5; border-radius: 6px; }
-.citation-title { display: flex; align-items: center; gap: 10px; }
-.citation-title > svg { color: var(--cyan); }
-.citation-title > div { display: grid; gap: 2px; }
-.citation-title strong { font-size: 12px; }
-.citation-title small { color: var(--muted); font-size: 9px; }
-.citation-files { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; }
-.citation-files button { min-width: 0; display: grid; grid-template-columns: 20px minmax(0,1fr) 16px; align-items: center; gap: 7px; padding: 8px; text-align: left; background: rgba(255,255,255,.72); border: 1px solid #dfe7e9; border-radius: 5px; }
-.citation-files button > svg:first-child { color: #63828d; }
-.citation-files span { min-width: 0; display: grid; gap: 2px; }
-.citation-files strong, .citation-files small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.citation-files strong { font-size: 10px; }
-.citation-files small { color: var(--muted); font-size: 8px; }
-
 .toolbar-band, .match-summary { min-height: 48px; display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 7px 10px; background: white; border: 1px solid var(--line); border-radius: 6px; }
 .search-field { min-width: 220px; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--soft); background: #f7f9fa; border: 1px solid var(--line); border-radius: 5px; }
 .search-field input { min-width: 0; flex: 1; color: var(--ink); font-size: 11px; background: transparent; border: 0; outline: 0; }
@@ -832,8 +818,6 @@ button.table-row:hover { background: #fafcfc; }
 
 @media (max-width: 1180px) {
   .dashboard-grid { grid-template-columns: 1fr; }
-  .knowledge-citations { grid-template-columns: 1fr auto; }
-  .citation-files { grid-row: 2; grid-column: 1 / -1; }
   .knowledge-overview { grid-template-columns: repeat(2,1fr); }
   .evaluation-hero { grid-template-columns: minmax(210px,1fr) 160px; }
   .eval-conclusion { grid-column: 1 / -1; padding-top: 13px; border-top: 1px solid rgba(255,255,255,.12); }
@@ -908,9 +892,6 @@ button.table-row:hover { background: #fafcfc; }
   .candidate-tags { display: none; }
   .decision-bar { align-items: flex-start; flex-direction: column; }
   .decision-bar .btn { width: 100%; }
-  .knowledge-citations { grid-template-columns: 1fr; }
-  .citation-files { grid-row: auto; grid-column: auto; grid-template-columns: 1fr; }
-  .knowledge-citations > .text-button { justify-self: start; }
   .toolbar-band { align-items: stretch; flex-wrap: wrap; }
   .toolbar-band .search-field { flex-basis: 100%; }
   .table-panel { overflow-x: auto; }
