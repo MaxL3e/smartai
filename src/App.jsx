@@ -19,7 +19,6 @@ import {
   Circle,
   CircleHelp,
   Clock3,
-  Database,
   Download,
   Edit3,
   Eye,
@@ -877,7 +876,7 @@ function Topbar({ setView, notifications, notificationOpen, setNotificationOpen,
   );
 }
 
-function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCandidate, knowledge, setView, advanceFlow, events, activeTask, updateActiveTask, notify, pushEvent, openDialog }) {
+function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCandidate, setView, advanceFlow, events, activeTask, updateActiveTask, notify, pushEvent }) {
   const stageMessage = {
     岗位方案: '正在等待人工确认岗位方案',
     人才搜索: '正在检索集团人才库并生成匹配排序',
@@ -914,8 +913,6 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
   const currentActivity = activityFeed[activityCursor % Math.max(activityFeed.length, 1)];
   const elapsedSeconds = 8 * 60 + 42 + liveSeconds;
   const elapsedLabel = `${Math.floor(elapsedSeconds / 60)} 分 ${String(elapsedSeconds % 60).padStart(2, '0')} 秒`;
-  const portraitKnowledge = knowledge.find((item) => item.id === (activeTask.role.includes('数据') ? 10 : 3));
-  const policyKnowledge = knowledge.find((item) => item.id === 5);
   const primaryAction = {
     岗位方案: { label: '审核岗位方案', action: () => setView('roleplan') },
     人才搜索: { label: '运行人才搜索', action: advanceFlow },
@@ -1028,15 +1025,6 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
         </aside>
       </div>
 
-      <section className="knowledge-citations">
-        <div className="citation-title"><Database size={20} /><div><strong>本次任务的知识依据</strong><small>所有生成与推荐均可回溯至企业资料</small></div></div>
-        <div className="citation-files">
-          <button onClick={() => openDialog('scorecard')}><FileText size={17} /><span><strong>{activeTask.role}评分卡</strong><small>岗位知识 · 当前版本</small></span><Eye size={15} /></button>
-          {portraitKnowledge && <button onClick={() => openDialog('knowledge', { item: portraitKnowledge })}><FileText size={17} /><span><strong>{portraitKnowledge.title}</strong><small>{portraitKnowledge.type} · {portraitKnowledge.version}</small></span><Eye size={15} /></button>}
-          {policyKnowledge && <button onClick={() => openDialog('knowledge', { item: policyKnowledge })}><FileText size={17} /><span><strong>{policyKnowledge.title}</strong><small>{policyKnowledge.type} · {policyKnowledge.version}</small></span><Eye size={15} /></button>}
-        </div>
-        <button className="text-button" onClick={() => setView('knowledge')}>管理知识库 <ArrowRight size={15} /></button>
-      </section>
     </>
   );
 }
