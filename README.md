@@ -147,3 +147,17 @@ git diff --check
 4. 审计与安全层：权限、脱敏、调用留痕、数据保留和合规策略。
 
 前端演示中的页面结构、状态和操作反馈可作为后续 API 契约与后端数据模型设计的基础。
+
+## 实施文档
+
+生产化方案已经进入仓库，统一入口见 [docs/README.md](docs/README.md)：
+
+生产主形态是嵌入客户 ATS 的招聘智能助手；当前独立站继续用于演示，业务模块后续会通过 Embed SDK 运行在岗位页、候选人页和 ATS 内全页工作区。
+
+- [产品需求](docs/product/PRD.md)
+- [招聘任务状态与业务流程](docs/product/workflow.md)
+- [系统架构](docs/architecture/system-design.md)
+- [领域模型](docs/architecture/domain-model.md)
+- [客户系统集成契约](docs/api/integration-contract.md)
+- [ATS 宿主嵌入契约](docs/api/embed-contract.md)
+- [MVP 实施清单](docs/roadmap/mvp-backlog.md)
