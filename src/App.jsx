@@ -1111,11 +1111,11 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
             </div>
             <div className="threshold-list"><div><span>强烈推荐</span><strong>≥ {thresholds.strong}</strong></div><div><span>推荐</span><strong>{thresholds.recommended}-{thresholds.strong - 1}</strong></div><div><span>待确认</span><strong>{thresholds.review}-{thresholds.recommended - 1}</strong></div></div>
           </section>
-          <section className="panel source-panel">
-            <div className="panel-heading"><div><span className="section-kicker">生成依据</span><h2>知识来源</h2></div><button className="icon-button small" onClick={() => setView('knowledge')}><ArrowRight size={16} /></button></div>
-            <div className="plan-source-grid">{generatedPlan.sourceIds.map((id) => knowledge.find((item) => item.id === id && !item.archived)).filter(Boolean).map((item) => <button className="plan-source" key={item.id} onClick={() => openDialog('knowledge', { item })}><FileText size={16} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={13} /></button>)}</div>
-          </section>
         </aside>
+        <section className="panel source-panel">
+          <div className="panel-heading"><div><span className="section-kicker">生成依据</span><h2>知识来源</h2></div><button className="text-button" onClick={() => setView('knowledge')}>管理知识库 <ArrowRight size={15} /></button></div>
+          <div className="plan-source-grid">{generatedPlan.sourceIds.map((id) => knowledge.find((item) => item.id === id && !item.archived)).filter(Boolean).map((item) => <button className="plan-source" key={item.id} onClick={() => openDialog('knowledge', { item })}><FileText size={16} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={13} /></button>)}</div>
+        </section>
       </div>
     </>
   );

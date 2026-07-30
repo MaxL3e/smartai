@@ -342,7 +342,7 @@ button.table-row:hover { background: #fafcfc; }
 .plan-source-band span { display: grid; gap: 2px; }
 .plan-source-band strong { font-size: 11px; }
 .plan-source-band small { color: var(--muted); font-size: 9px; }
-.role-plan-layout { min-height: 0; display: grid; grid-template-columns: minmax(0,1.28fr) minmax(340px,.72fr); align-items: start; gap: 12px; }
+.role-plan-layout { min-height: 0; display: grid; grid-template-columns: minmax(0,1.28fr) minmax(340px,.72fr); align-items: start; align-content: start; gap: 12px; }
 .role-document { min-height: 0; overflow: hidden; }
 .version-label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; }
 .document-block { padding: 12px 16px; border-bottom: 1px solid var(--line); }
@@ -365,6 +365,7 @@ button.table-row:hover { background: #fafcfc; }
 .tag-list span { padding: 3px 7px; color: #3d5e6d; font-size: 8px; background: #eaf1f3; border-radius: 3px; }
 .plan-side { min-height: 0; display: grid; align-content: start; gap: 10px; }
 .scoring-card, .source-panel { overflow: hidden; }
+.source-panel { grid-column: 1 / -1; }
 .score-rule-list { padding: 2px 13px; }
 .score-rule { min-height: 56px; display: grid; grid-template-columns: 39px minmax(0,1fr); align-items: center; gap: 8px; border-bottom: 1px solid #edf0f2; }
 .score-rule:last-child { border: 0; }
@@ -380,10 +381,9 @@ button.table-row:hover { background: #fafcfc; }
 .threshold-list > div:last-child { border: 0; }
 .threshold-list span { color: var(--muted); font-size: 8px; }
 .threshold-list strong { font-size: 10px; }
-.plan-source-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
-.plan-source { width: 100%; min-height: 43px; display: grid; grid-template-columns: 20px minmax(0,1fr) 14px; align-items: center; gap: 6px; padding: 7px 10px; text-align: left; background: white; border: 0; border-right: 1px solid #edf0f2; border-bottom: 1px solid #edf0f2; }
-.plan-source:nth-child(even) { border-right: 0; }
-.plan-source:nth-last-child(-n+2) { border-bottom: 0; }
+.plan-source-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+.plan-source { width: 100%; min-height: 52px; display: grid; grid-template-columns: 22px minmax(0,1fr) 16px; align-items: center; gap: 8px; padding: 8px 12px; text-align: left; background: white; border: 0; border-right: 1px solid #edf0f2; }
+.plan-source:nth-child(4n) { border-right: 0; }
 .plan-source:hover { background: #fafcfc; }
 .plan-source > svg:first-child { color: var(--cyan); }
 .plan-source span { min-width: 0; display: grid; gap: 3px; }
@@ -854,6 +854,11 @@ button.table-row:hover { background: #fafcfc; }
   .match-summary > .text-button { justify-self: end; }
   .evaluation-grid { grid-template-columns: 1fr; }
   .role-plan-layout { grid-template-columns: 1fr; }
+  .source-panel { grid-column: auto; }
+  .plan-source-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .plan-source { border-right: 1px solid #edf0f2; border-bottom: 1px solid #edf0f2; }
+  .plan-source:nth-child(even) { border-right: 0; }
+  .plan-source:nth-last-child(-n+2) { border-bottom: 0; }
   .document-main-grid { grid-template-columns: 1fr; }
   .document-main-grid .document-block:first-child { border-right: 0; }
 }
@@ -927,8 +932,8 @@ button.table-row:hover { background: #fafcfc; }
   .knowledge-overview { grid-template-columns: 1fr; }
   .plan-source-band { align-items: flex-start; flex-direction: column; }
   .plan-source-grid { grid-template-columns: 1fr; }
-  .plan-source { border-right: 0; }
-  .plan-source:nth-last-child(2) { border-bottom: 1px solid #edf0f2; }
+  .plan-source, .plan-source:nth-child(even), .plan-source:nth-child(4n) { border-right: 0; border-bottom: 1px solid #edf0f2; }
+  .plan-source:last-child { border-bottom: 0; }
   .scorecard-editor-intro { grid-template-columns: 22px minmax(0,1fr); }
   .scorecard-total-badge { grid-column: 2; justify-self: start; }
   .scorecard-editor-row { grid-template-columns: 24px minmax(0,1fr) 72px 30px; align-items: end; gap: 7px; }
