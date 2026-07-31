@@ -22,6 +22,7 @@ import {
   Download,
   Edit3,
   Eye,
+  ExternalLink,
   FileText,
   GraduationCap,
   History,
@@ -29,6 +30,7 @@ import {
   ListFilter,
   LockKeyhole,
   MapPin,
+  Maximize2,
   MoreHorizontal,
   RefreshCw,
   Play,
@@ -48,6 +50,17 @@ import {
   Video,
   X,
 } from 'lucide-react';
+import {
+  EMBED_PROTOCOL_VERSION,
+  applyEmbedTheme,
+  createEmbedEnvelope,
+  isEmbedEnvelope,
+  isRecentEmbedEnvelope,
+  normalizeEmbedView,
+  readEmbedConfiguration,
+  sanitizeHostContext,
+  validateHostContext,
+} from '../packages/embed-sdk/src/index.js';
 
 const navItems = [
   { id: 'workspace', label: '智能体工作台', icon: LayoutDashboard },
@@ -61,6 +74,19 @@ const manageItems = [
   { id: 'knowledge', label: '知识库', icon: BookOpenText },
   { id: 'audit', label: '运行审计', icon: Activity },
 ];
+
+const embedRequiredCapabilities = ['CONTEXT_PUSH'];
+const embedSupportedCapabilities = ['CONTEXT_PUSH', 'HOST_NAVIGATION', 'AUTH_REFRESH', 'THEME_TOKENS'];
+const embedLifecycleStates = Object.freeze({
+  idle: 'idle',
+  authenticating: 'authenticating',
+  ready: 'ready',
+  renewing: 'renewing',
+  failed: 'failed',
+  destroyed: 'destroyed',
+});
+const embedRequestTimeoutMs = 10000;
+const embedRenewResponseTimeoutMs = 15000;
 
 const flowSteps = [
   { title: '岗位方案', completedNote: '已确认', activeNote: '等待人工确认', pendingNote: '等待生成' },
@@ -492,27 +518,112 @@ function PageHeader({ eyebrow, title, description, actions }) {
   );
 }
 
+function AppView({ view, context }) {
+  return (
+    <>
+      {view === 'workspace' && <Workspace {...context} />}
+      {view === 'roleplan' && <RolePlan {...context} />}
+      {view === 'tasks' && <Tasks {...context} />}
+      {view === 'talent' && <Talent {...context} />}
+      {view === 'interviews' && <Interviews {...context} />}
+      {view === 'evaluation' && <Evaluation {...context} />}
+      {view === 'knowledge' && <Knowledge {...context} />}
+      {view === 'audit' && <Audit {...context} />}
+    </>
+  );
+}
+
+function HostContextBar({ context, activeTask, candidate, status, surface, onOpenWorkspace, onReturnToHost }) {
+  const demoMode = status === '协议模拟 / 本地映射';
+  const contextLabel = !context ? '等待 ATS 会话' : context.scene === 'candidate'
+    ? `${candidate?.name || context?.candidateRef?.id || '当前候选人'} · ${activeTask?.role || context?.jobRef?.id || '当前岗位'}`
+    : `${activeTask?.role || context?.jobRef?.id || '等待 ATS 岗位上下文'}`;
+  return (
+    <header className="embed-context-bar">
+      <div className="embed-context-brand"><Sparkles size={16} /><strong>知聘</strong><span>ATS 智能插件</span></div>
+      <div className="embed-context-current">
+        <span className={classNames('embed-connection-dot', ['已认证', '协议模拟 / 本地映射'].includes(status) && 'connected')} />
+        <div><strong>{contextLabel}</strong><small>{demoMode ? '未连接生产后端' : context ? '服务端授权上下文' : '客户 ATS'} · {status}</small></div>
+      </div>
+      <div className="embed-context-actions">
+        {surface === 'sidebar' && <button className="icon-button small" title="打开全页工作区" onClick={onOpenWorkspace}><Maximize2 size={15} /></button>}
+        <button className="btn secondary embed-return" onClick={onReturnToHost}><ExternalLink size={14} />返回 ATS</button>
+      </div>
+    </header>
+  );
+}
+
+function EmbedSidebar({ activeTask, candidatePool, flowStep, selectedCandidates, setSelectedCandidate, setView, onOpenWorkspace }) {
+  const topCandidates = candidatePool.slice(0, 3);
+  const stage = flowSteps[Math.min(flowStep, flowSteps.length - 1)];
+  return (
+    <div className="embed-sidebar-view">
+      <section className="embed-task-summary">
+        <div className="embed-section-heading"><span>当前招聘任务</span><StatusPill tone={activeTask.tone}>{activeTask.stage}</StatusPill></div>
+        <h1>{activeTask.role}</h1>
+        <p>{activeTask.dept} · {activeTask.city} · 招聘 {activeTask.count}</p>
+        <div className="embed-progress-track"><i style={{ width: `${activeTask.progress}%` }} /></div>
+        <div className="embed-progress-meta"><span>{stage?.title || activeTask.stage}</span><strong>{activeTask.progress}%</strong></div>
+      </section>
+
+      <section className="embed-pending-action">
+        <span className="embed-pending-icon"><ShieldCheck size={18} /></span>
+        <div><small>人工确认点</small><strong>{activeTask.stage === '名单确认' ? '候选推荐名单待确认' : `${activeTask.stage}待处理`}</strong><p>智能体只生成建议，关键业务动作仍由招聘负责人确认。</p></div>
+        <button className="btn primary" onClick={() => { setView(activeTask.stage === '岗位方案' ? 'roleplan' : activeTask.stage === '名单确认' ? 'talent' : 'workspace'); onOpenWorkspace(); }}>进入工作区处理</button>
+      </section>
+
+      <section className="embed-candidate-section">
+        <div className="embed-section-heading"><span>优先推荐</span><small>已选 {selectedCandidates.length} 人</small></div>
+        <div className="embed-candidate-list">
+          {topCandidates.map((person, index) => (
+            <button key={person.id} onClick={() => { setSelectedCandidate(person.id); setView('talent'); onOpenWorkspace(); }}>
+              <span className={`avatar avatar-${(index % 3) + 1}`}>{person.initials}</span>
+              <span><strong>{person.name}</strong><small>{person.title}</small></span>
+              <span className="embed-score"><b>{person.score}</b><small>匹配分</small></span>
+              <ChevronRight size={14} />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <footer className="embed-sidebar-footer"><LockKeyhole size={13} />上下文由 ATS 会话提供 · 操作全程留痕</footer>
+    </div>
+  );
+}
+
+function EmbedGate({ status }) {
+  return (
+    <div className="embed-gate" role="status">
+      <span><RefreshCw size={20} /></span>
+      <strong>{status}</strong>
+      <p>完成会话认证和资源映射后才会显示招聘业务数据。</p>
+    </div>
+  );
+}
+
 function App() {
-  const [view, setView] = useState('workspace');
-  const [selectedCandidate, setSelectedCandidate] = useState(() => loadStored('smartai.selectedCandidate', 1));
-  const [knowledge, setKnowledge] = useState(() => loadStored('smartai.knowledge', knowledgeSeed));
-  const [events, setEvents] = useState(() => loadStored('smartai.events', initialEvents));
-  const [tasks, setTasks] = useState(() => loadStored('smartai.recruitmentTasks', initialTasks));
-  const [activeTaskId, setActiveTaskId] = useState(() => loadStored('smartai.activeTaskId', initialTasks[0].code));
+  const embedConfig = useMemo(() => readEmbedConfiguration(), []);
+  const loadAppState = (key, fallback) => embedConfig.isEmbedded ? fallback : loadStored(key, fallback);
+  const [view, setView] = useState(embedConfig.initialView);
+  const [selectedCandidate, setSelectedCandidate] = useState(() => loadAppState('smartai.selectedCandidate', 1));
+  const [knowledge, setKnowledge] = useState(() => loadAppState('smartai.knowledge', knowledgeSeed));
+  const [events, setEvents] = useState(() => loadAppState('smartai.events', initialEvents));
+  const [tasks, setTasks] = useState(() => loadAppState('smartai.recruitmentTasks', initialTasks));
+  const [activeTaskId, setActiveTaskId] = useState(() => loadAppState('smartai.activeTaskId', initialTasks[0].code));
   const [candidateSelections, setCandidateSelections] = useState(() => {
-    const stored = loadStored('smartai.selectedCandidates', {});
+    const stored = loadAppState('smartai.selectedCandidates', {});
     const normalized = Array.isArray(stored) ? { [initialTasks[0].code]: stored } : stored;
     return { ...initialCandidateSelections, ...normalized };
   });
   const [interviewStatusByTask, setInterviewStatusByTask] = useState(() => {
-    const stored = loadStored('smartai.interviewStatuses', {});
+    const stored = loadAppState('smartai.interviewStatuses', {});
     const legacy = stored && Object.values(stored).some((value) => typeof value === 'string');
     const normalized = legacy ? { [initialTasks[0].code]: stored } : stored;
     return { ...initialInterviewStatuses, ...normalized };
   });
-  const [evaluationDecisions, setEvaluationDecisions] = useState(() => loadStored('smartai.evaluationDecisions', {}));
-  const [matchStrategy, setMatchStrategy] = useState(() => loadStored('smartai.matchStrategy', { minScore: 70, sort: 'score', 核心技术能力: 30, 治理专业能力: 30, 核心专业能力: 30, 项目复杂度: 30, 行业与业务: 20, 业务与行业: 20, 成果证据: 20 }));
-  const [notifications, setNotifications] = useState(() => loadStored('smartai.notifications', initialNotifications));
+  const [evaluationDecisions, setEvaluationDecisions] = useState(() => loadAppState('smartai.evaluationDecisions', {}));
+  const [matchStrategy, setMatchStrategy] = useState(() => loadAppState('smartai.matchStrategy', { minScore: 70, sort: 'score', 核心技术能力: 30, 治理专业能力: 30, 核心专业能力: 30, 项目复杂度: 30, 行业与业务: 20, 业务与行业: 20, 成果证据: 20 }));
+  const [notifications, setNotifications] = useState(() => loadAppState('smartai.notifications', initialNotifications));
   const [toast, setToast] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
@@ -520,6 +631,30 @@ function App() {
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [hostContext, setHostContext] = useState(null);
+  const [embedStatus, setEmbedStatus] = useState(embedConfig.isEmbedded ? '等待 ATS 会话' : '独立模式');
+  const embedSessionRef = useRef(null);
+  const embedSequenceRef = useRef(0);
+  const embedInboundSequenceRef = useRef(0);
+  const embedPortRef = useRef(null);
+  const embedContextVersionRef = useRef(0);
+  const embedContextEtagRef = useRef(null);
+  const embedNoncesRef = useRef(new Set());
+  const embedAccessTokenRef = useRef(null);
+  const embedHostContextRef = useRef(null);
+  const embedAuthModeRef = useRef('idle');
+  const embedLifecycleRef = useRef(embedLifecycleStates.idle);
+  const embedCapabilitiesRef = useRef([]);
+  const embedHostCapabilitiesRef = useRef([]);
+  const embedExpiryTimerRef = useRef(null);
+  const embedRenewTimerRef = useRef(null);
+  const embedAccessExpiryTimerRef = useRef(null);
+  const embedRenewTimeoutRef = useRef(null);
+  const embedPendingRenewReplyToRef = useRef(null);
+  const embedOperationAbortRef = useRef(null);
+  const embedMessageQueueRef = useRef(Promise.resolve());
+  const embedEffectGenerationRef = useRef(0);
+  const tasksRef = useRef(tasks);
 
   const activeTask = tasks.find((item) => item.code === activeTaskId) || tasks[0];
   const candidatePool = useMemo(() => {
@@ -530,6 +665,8 @@ function App() {
   const selectedCandidates = candidateSelections[activeTask?.code] || [];
   const interviewStatuses = interviewStatusByTask[activeTask?.code] || {};
   const flowStep = stageIndex(activeTask?.stage);
+
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
 
   function setSelectedCandidates(update) {
     setCandidateSelections((all) => {
@@ -547,18 +684,534 @@ function App() {
     });
   }
 
+  function persistAppState(key, value) {
+    if (!embedConfig.isEmbedded) window.localStorage.setItem(key, JSON.stringify(value));
+  }
+  useEffect(() => persistAppState('smartai.recruitmentTasks', tasks), [tasks, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.selectedCandidates', candidateSelections), [candidateSelections, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.selectedCandidate', selectedCandidate), [selectedCandidate, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.knowledge', knowledge), [knowledge, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.events', events), [events, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.activeTaskId', activeTaskId), [activeTaskId, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.interviewStatuses', interviewStatusByTask), [interviewStatusByTask, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.evaluationDecisions', evaluationDecisions), [evaluationDecisions, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.matchStrategy', matchStrategy), [matchStrategy, embedConfig.isEmbedded]);
+  useEffect(() => persistAppState('smartai.notifications', notifications), [notifications, embedConfig.isEmbedded]);
   useEffect(() => {
-    window.localStorage.setItem('smartai.recruitmentTasks', JSON.stringify(tasks));
-  }, [tasks]);
-  useEffect(() => window.localStorage.setItem('smartai.selectedCandidates', JSON.stringify(candidateSelections)), [candidateSelections]);
-  useEffect(() => window.localStorage.setItem('smartai.selectedCandidate', JSON.stringify(selectedCandidate)), [selectedCandidate]);
-  useEffect(() => window.localStorage.setItem('smartai.knowledge', JSON.stringify(knowledge)), [knowledge]);
-  useEffect(() => window.localStorage.setItem('smartai.events', JSON.stringify(events)), [events]);
-  useEffect(() => window.localStorage.setItem('smartai.activeTaskId', JSON.stringify(activeTaskId)), [activeTaskId]);
-  useEffect(() => window.localStorage.setItem('smartai.interviewStatuses', JSON.stringify(interviewStatusByTask)), [interviewStatusByTask]);
-  useEffect(() => window.localStorage.setItem('smartai.evaluationDecisions', JSON.stringify(evaluationDecisions)), [evaluationDecisions]);
-  useEffect(() => window.localStorage.setItem('smartai.matchStrategy', JSON.stringify(matchStrategy)), [matchStrategy]);
-  useEffect(() => window.localStorage.setItem('smartai.notifications', JSON.stringify(notifications)), [notifications]);
+    if (!embedConfig.isEmbedded) return undefined;
+    const generation = embedEffectGenerationRef.current + 1;
+    embedEffectGenerationRef.current = generation;
+    const acceptedHostMessageTypes = new Set(['context.replace', 'theme.update', 'route.open', 'visibility.change', 'session.renew.response', 'destroy']);
+
+    function isCurrentEffect() {
+      return embedEffectGenerationRef.current === generation && embedLifecycleRef.current !== embedLifecycleStates.destroyed;
+    }
+
+    function protocolError(code) {
+      return Object.assign(new Error(code), { code });
+    }
+
+    function clearTimer(timerRef) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    function clearAllTimers() {
+      clearTimer(embedExpiryTimerRef);
+      clearTimer(embedRenewTimerRef);
+      clearTimer(embedAccessExpiryTimerRef);
+      clearTimer(embedRenewTimeoutRef);
+    }
+
+    function closeMessagePort() {
+      if (!embedPortRef.current) return;
+      embedPortRef.current.onmessage = null;
+      embedPortRef.current.onmessageerror = null;
+      embedPortRef.current.close();
+      embedPortRef.current = null;
+    }
+
+    function clearAuthorization(status, nextLifecycle = embedLifecycleStates.failed) {
+      clearAllTimers();
+      embedOperationAbortRef.current?.abort();
+      embedOperationAbortRef.current = null;
+      embedAccessTokenRef.current = null;
+      embedHostContextRef.current = null;
+      embedContextEtagRef.current = null;
+      embedCapabilitiesRef.current = [];
+      embedHostCapabilitiesRef.current = [];
+      embedPendingRenewReplyToRef.current = null;
+      embedAuthModeRef.current = 'idle';
+      embedLifecycleRef.current = nextLifecycle;
+      setHostContext(null);
+      setEmbedStatus(status);
+    }
+
+    function failSession(status, code, replyTo = null) {
+      clearAuthorization(status, embedLifecycleStates.failed);
+      if (code) sendEmbedMessage('error', { code, recoverable: true }, replyTo);
+    }
+
+    async function requestJson(url, options, failureCode, includeResponse = false) {
+      embedOperationAbortRef.current?.abort();
+      const controller = new AbortController();
+      let timedOut = false;
+      embedOperationAbortRef.current = controller;
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, embedRequestTimeoutMs);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        if (!response.ok) throw protocolError(failureCode);
+        const body = await response.json();
+        return includeResponse ? { body, response } : body;
+      } catch (error) {
+        if (error?.name === 'AbortError') throw protocolError(timedOut ? 'REQUEST_TIMEOUT' : 'REQUEST_ABORTED');
+        throw error?.code ? error : protocolError(failureCode);
+      } finally {
+        window.clearTimeout(timeout);
+        if (embedOperationAbortRef.current === controller) embedOperationAbortRef.current = null;
+      }
+    }
+
+    function resolveSessionEtag(response, contextVersion, { requireHeader = false, fallbackEtag = null } = {}) {
+      const responseEtag = response?.headers.get('ETag');
+      const etag = responseEtag || fallbackEtag || (!requireHeader && Number.isInteger(contextVersion) && contextVersion > 0
+        ? `W/\"${contextVersion}\"`
+        : null);
+      if (!etag || !/^(W\/)?\"[1-9][0-9]*\"$/.test(etag)) throw protocolError('INVALID_SESSION_ETAG');
+      return etag;
+    }
+
+    async function authenticateSession(payload, sessionId) {
+      const demoHost = ['localhost', '127.0.0.1', 'maxl3e.github.io'].includes(window.location.hostname);
+      if (payload.demoMode) {
+        if (!demoHost) throw protocolError('DEMO_MODE_NOT_ALLOWED');
+        return {
+          mode: 'demo',
+          effectiveCapabilities: embedSupportedCapabilities,
+          context: payload.context,
+          accessToken: null,
+          expiresAt: null,
+        };
+      }
+      if (!payload.bootstrapToken) throw protocolError('BOOTSTRAP_TOKEN_REQUIRED');
+      const { body: envelope, response } = await requestJson('/api/embed/v1/token-exchange', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', 'X-Request-Id': crypto.randomUUID() },
+        body: JSON.stringify({
+          sessionId,
+          bootstrapToken: payload.bootstrapToken,
+          nonce: payload.context?.nonce || embedHostContextRef.current?.nonce,
+          protocolVersion: EMBED_PROTOCOL_VERSION,
+          observedParentOrigin: embedConfig.parentOrigin,
+        }),
+      }, 'TOKEN_EXCHANGE_FAILED', true);
+      const grant = envelope.data || envelope;
+      const expiresAt = Date.parse(grant.expiresAt);
+      if (!grant.accessToken || !grant.context || grant.sessionId !== sessionId || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        throw protocolError('INVALID_ACCESS_GRANT');
+      }
+      return {
+        mode: 'authenticated',
+        effectiveCapabilities: Array.isArray(grant.capabilities?.effective) ? grant.capabilities.effective : [],
+        context: grant.context,
+        accessToken: grant.accessToken,
+        expiresAt: grant.expiresAt,
+        contextEtag: resolveSessionEtag(response, grant.context.contextVersion),
+      };
+    }
+
+    function scheduleContextExpiry(context) {
+      clearTimer(embedExpiryTimerRef);
+      const delay = Date.parse(context.expiresAt) - Date.now();
+      if (!Number.isFinite(delay) || delay <= 0) throw protocolError('CONTEXT_EXPIRED');
+      embedExpiryTimerRef.current = window.setTimeout(() => {
+        if (!isCurrentEffect()) return;
+        failSession('上下文已过期', 'CONTEXT_EXPIRED');
+      }, Math.min(delay, 2147483647));
+    }
+
+    function applyAuthorizedContext(rawContext, authMode, { allowCurrent = false } = {}) {
+      const nextContext = sanitizeHostContext(rawContext);
+      const validation = validateHostContext(nextContext);
+      if (!validation.valid) throw protocolError(validation.code);
+
+      const currentContext = embedHostContextRef.current;
+      const sameCurrentContext = Boolean(
+        allowCurrent
+        && currentContext
+        && nextContext.contextVersion === embedContextVersionRef.current
+        && nextContext.nonce === currentContext.nonce,
+      );
+      const rolledBack = allowCurrent
+        ? nextContext.contextVersion < embedContextVersionRef.current
+        : nextContext.contextVersion <= embedContextVersionRef.current;
+      const replayed = embedNoncesRef.current.has(nextContext.nonce) && !sameCurrentContext;
+      if (rolledBack) throw protocolError('CONTEXT_VERSION_ROLLBACK');
+      if (replayed) throw protocolError('CONTEXT_REPLAYED');
+
+      const mappedTask = tasksRef.current.find((task) => (
+        task.code === nextContext.taskRef?.id
+        || (authMode === 'demo' && task.code === nextContext.jobRef?.id)
+      ));
+      const candidateId = Number(nextContext.candidateRef?.id);
+      const candidateMapped = !nextContext.candidateRef || (
+        mappedTask
+        && Number.isInteger(candidateId)
+        && getCandidates(mappedTask).some((item) => item.id === candidateId)
+      );
+      if (!mappedTask || !candidateMapped) throw protocolError('CONTEXT_MAPPING_NOT_FOUND');
+
+      embedContextVersionRef.current = nextContext.contextVersion;
+      embedNoncesRef.current.add(nextContext.nonce);
+      embedHostContextRef.current = nextContext;
+      setHostContext(nextContext);
+      setActiveTaskId(mappedTask.code);
+      if (Number.isInteger(candidateId) && candidateId > 0) setSelectedCandidate(candidateId);
+      scheduleContextExpiry(nextContext);
+      return { context: nextContext, mappedTaskId: mappedTask.code };
+    }
+
+    function negotiateCapabilities(authCapabilities) {
+      const effective = embedSupportedCapabilities.filter((item) => (
+        embedHostCapabilitiesRef.current.includes(item) && authCapabilities.includes(item)
+      ));
+      const missing = embedRequiredCapabilities.filter((item) => !effective.includes(item));
+      if (missing.length) throw Object.assign(protocolError('REQUIRED_CAPABILITY_MISSING'), { missing });
+      return { effective, missing };
+    }
+
+    function scheduleAccessTokenTimers(expiresAt) {
+      clearTimer(embedRenewTimerRef);
+      clearTimer(embedAccessExpiryTimerRef);
+      const expiresIn = Date.parse(expiresAt) - Date.now();
+      if (!Number.isFinite(expiresIn) || expiresIn <= 0) throw protocolError('ACCESS_TOKEN_EXPIRED');
+
+      embedAccessExpiryTimerRef.current = window.setTimeout(() => {
+        if (!isCurrentEffect()) return;
+        failSession('访问令牌已过期', 'ACCESS_TOKEN_EXPIRED');
+      }, Math.min(expiresIn, 2147483647));
+
+      if (!embedCapabilitiesRef.current.includes('AUTH_REFRESH')) return;
+      const renewIn = Math.max(0, expiresIn - 60000);
+      embedRenewTimerRef.current = window.setTimeout(() => {
+        if (!isCurrentEffect() || embedLifecycleRef.current !== embedLifecycleStates.ready) return;
+        embedLifecycleRef.current = embedLifecycleStates.renewing;
+        setEmbedStatus('正在续期会话');
+        const requestMessageId = sendEmbedMessage('session.renew.request', { expiresAt });
+        if (!requestMessageId) {
+          failSession('会话续期失败', 'SESSION_RENEW_REQUEST_FAILED');
+          return;
+        }
+        embedPendingRenewReplyToRef.current = requestMessageId;
+        embedRenewTimeoutRef.current = window.setTimeout(() => {
+          if (!isCurrentEffect() || embedLifecycleRef.current !== embedLifecycleStates.renewing) return;
+          failSession('会话续期超时', 'SESSION_RENEW_TIMEOUT');
+        }, embedRenewResponseTimeoutMs);
+      }, Math.min(renewIn, 2147483647));
+    }
+
+    function activateAuthorization(auth, { allowCurrentContext = false } = {}) {
+      const capabilityResult = negotiateCapabilities(auth.effectiveCapabilities);
+      const contextResult = applyAuthorizedContext(auth.context, auth.mode, { allowCurrent: allowCurrentContext });
+      embedAuthModeRef.current = auth.mode;
+      embedCapabilitiesRef.current = capabilityResult.effective;
+      embedAccessTokenRef.current = auth.accessToken;
+      embedContextEtagRef.current = auth.mode === 'authenticated' ? auth.contextEtag : null;
+      embedLifecycleRef.current = embedLifecycleStates.ready;
+      setEmbedStatus(auth.mode === 'demo' ? '协议模拟 / 本地映射' : '已认证');
+      if (auth.mode === 'authenticated') scheduleAccessTokenTimers(auth.expiresAt);
+      return { ...capabilityResult, ...contextResult };
+    }
+
+    function bindMessagePort(port) {
+      if (!port) return;
+      closeMessagePort();
+      embedPortRef.current = port;
+      port.onmessage = (event) => enqueueHostMessage(event.data, { source: 'port', port: null });
+      port.onmessageerror = () => {
+        if (isCurrentEffect()) failSession('消息通道异常', 'MESSAGE_CHANNEL_ERROR');
+      };
+      port.start?.();
+    }
+
+    async function initializeHostSession(message, port) {
+      clearAuthorization('正在验证 ATS 会话', embedLifecycleStates.authenticating);
+      embedSessionRef.current = message.sessionId;
+      embedInboundSequenceRef.current = message.sequence;
+      embedContextVersionRef.current = 0;
+      embedNoncesRef.current.clear();
+      embedHostCapabilitiesRef.current = Array.isArray(message.payload.capabilities) ? message.payload.capabilities : [];
+      closeMessagePort();
+      bindMessagePort(port);
+      applyEmbedTheme(message.payload.theme || {});
+      try {
+        const auth = await authenticateSession(message.payload, message.sessionId);
+        if (!isCurrentEffect() || embedLifecycleRef.current !== embedLifecycleStates.authenticating) return;
+        const result = activateAuthorization(auth);
+        if (message.payload.route?.view) setView(normalizeEmbedView(message.payload.route.view));
+        sendEmbedMessage('context.accepted', {
+          contextVersion: result.context.contextVersion,
+          mappedTaskId: result.mappedTaskId,
+        }, message.messageId);
+        sendEmbedMessage('embed.initialized', {
+          capabilities: {
+            required: embedRequiredCapabilities,
+            supported: embedSupportedCapabilities,
+            effective: result.effective,
+            missing: result.missing,
+          },
+        }, message.messageId);
+      } catch (error) {
+        if (!isCurrentEffect() || embedLifecycleRef.current === embedLifecycleStates.failed) return;
+        const code = error.code || error.message || 'EMBED_AUTH_FAILED';
+        failSession(code === 'REQUIRED_CAPABILITY_MISSING' ? '宿主能力不足' : '会话认证失败', code, message.messageId);
+      }
+    }
+
+    async function replaceContext(message) {
+      if (!embedCapabilitiesRef.current.includes('CONTEXT_PUSH')) return;
+      if (embedAuthModeRef.current === 'demo') {
+        try {
+          const result = applyAuthorizedContext(message.payload.context, 'demo');
+          sendEmbedMessage('context.accepted', {
+            contextVersion: result.context.contextVersion,
+            mappedTaskId: result.mappedTaskId,
+          }, message.messageId);
+        } catch (error) {
+          const code = error.code || error.message || 'CONTEXT_REJECTED';
+          clearAuthorization('上下文不可用', embedLifecycleStates.failed);
+          sendEmbedMessage('context.rejected', { code, recoverable: true }, message.messageId);
+        }
+        return;
+      }
+
+      if (!embedAccessTokenRef.current) {
+        failSession('会话认证失效', 'ACCESS_TOKEN_REQUIRED', message.messageId);
+        return;
+      }
+      embedLifecycleRef.current = embedLifecycleStates.authenticating;
+      setHostContext(null);
+      setEmbedStatus('正在验证新上下文');
+      try {
+        const sessionId = encodeURIComponent(embedSessionRef.current);
+        const resolveRequestId = crypto.randomUUID();
+        const { body: resolutionEnvelope, response: resolutionResponse } = await requestJson(`/api/embed/v1/sessions/${sessionId}/context-resolutions`, {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'omit',
+          headers: {
+            Authorization: `Bearer ${embedAccessTokenRef.current}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': crypto.randomUUID(),
+            'X-Request-Id': resolveRequestId,
+          },
+          body: JSON.stringify({
+            hostContext: sanitizeHostContext(message.payload.context),
+            observedParentOrigin: embedConfig.parentOrigin,
+          }),
+        }, 'CONTEXT_RESOLUTION_FAILED', true);
+        if (!isCurrentEffect() || embedLifecycleRef.current !== embedLifecycleStates.authenticating) return;
+        const resolution = resolutionEnvelope.data || resolutionEnvelope;
+        if (!resolution.resolutionId || !resolution.contextHash || !Number.isInteger(resolution.contextVersion)) {
+          throw protocolError('INVALID_CONTEXT_RESOLUTION');
+        }
+        const currentEtag = resolveSessionEtag(
+          resolutionResponse,
+          embedContextVersionRef.current,
+          { fallbackEtag: embedContextEtagRef.current },
+        );
+        const replaceRequestId = crypto.randomUUID();
+        const { body: replacementEnvelope, response: replacementResponse } = await requestJson(`/api/embed/v1/sessions/${sessionId}/context`, {
+          method: 'PUT',
+          cache: 'no-store',
+          credentials: 'omit',
+          headers: {
+            Authorization: `Bearer ${embedAccessTokenRef.current}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': crypto.randomUUID(),
+            'If-Match': currentEtag,
+            'X-Request-Id': replaceRequestId,
+          },
+          body: JSON.stringify({
+            resolutionId: resolution.resolutionId,
+            contextHash: resolution.contextHash,
+            expectedContextVersion: resolution.contextVersion,
+            observedParentOrigin: embedConfig.parentOrigin,
+          }),
+        }, 'CONTEXT_REPLACEMENT_FAILED', true);
+        if (!isCurrentEffect() || embedLifecycleRef.current !== embedLifecycleStates.authenticating) return;
+        const replacement = replacementEnvelope.data || replacementEnvelope;
+        const nextEtag = resolveSessionEtag(replacementResponse, replacement.contextVersion, { requireHeader: true });
+        const result = applyAuthorizedContext(replacement, 'authenticated');
+        embedContextEtagRef.current = nextEtag;
+        embedLifecycleRef.current = embedLifecycleStates.ready;
+        setEmbedStatus('已认证');
+        sendEmbedMessage('context.accepted', {
+          contextVersion: result.context.contextVersion,
+          mappedTaskId: result.mappedTaskId,
+        }, message.messageId);
+      } catch (error) {
+        if (!isCurrentEffect() || embedLifecycleRef.current === embedLifecycleStates.failed) return;
+        const code = error.code || error.message || 'CONTEXT_RESOLUTION_FAILED';
+        clearAuthorization('上下文授权失败', embedLifecycleStates.failed);
+        sendEmbedMessage('context.rejected', { code, recoverable: true }, message.messageId);
+      }
+    }
+
+    async function renewSession(message) {
+      clearTimer(embedRenewTimeoutRef);
+      embedPendingRenewReplyToRef.current = null;
+      if (message.payload.error) {
+        const code = message.payload.error.code || 'SESSION_RENEW_FAILED';
+        failSession('会话续期失败', code, message.messageId);
+        return;
+      }
+      try {
+        const auth = await authenticateSession(message.payload, message.sessionId);
+        if (!isCurrentEffect() || embedLifecycleRef.current !== embedLifecycleStates.renewing) return;
+        const result = activateAuthorization(auth, { allowCurrentContext: true });
+        sendEmbedMessage('action.completed', {
+          action: 'session.renew',
+          contextVersion: result.context.contextVersion,
+        }, message.messageId);
+      } catch (error) {
+        if (!isCurrentEffect() || embedLifecycleRef.current === embedLifecycleStates.failed) return;
+        failSession('会话续期失败', error.code || error.message || 'SESSION_RENEW_FAILED', message.messageId);
+      }
+    }
+
+    function destroySession() {
+      clearAuthorization('会话已关闭', embedLifecycleStates.destroyed);
+      embedSessionRef.current = null;
+      embedInboundSequenceRef.current = 0;
+      embedContextVersionRef.current = 0;
+      embedContextEtagRef.current = null;
+      embedNoncesRef.current.clear();
+      closeMessagePort();
+    }
+
+    async function processHostMessage(message, transport) {
+      if (!isCurrentEffect() || !isEmbedEnvelope(message) || !isRecentEmbedEnvelope(message)) return;
+      if (!Number.isSafeInteger(message.sequence) || message.sequence < 1) return;
+      let serialized;
+      try {
+        serialized = JSON.stringify(message);
+      } catch {
+        return;
+      }
+      if (serialized.length > 65536) return;
+
+      const lifecycle = embedLifecycleRef.current;
+      const newSessionInit = (
+        message.type === 'host.init'
+        && transport.source === 'window'
+        && typeof message.sessionId === 'string'
+        && message.sessionId.length > 0
+        && (lifecycle === embedLifecycleStates.idle || (
+          lifecycle === embedLifecycleStates.failed && message.sessionId !== embedSessionRef.current
+        ))
+      );
+      if (lifecycle === embedLifecycleStates.idle || lifecycle === embedLifecycleStates.failed) {
+        if (!newSessionInit) return;
+        embedInboundSequenceRef.current = 0;
+        await initializeHostSession(message, transport.port);
+        return;
+      }
+
+      if (message.sessionId !== embedSessionRef.current || message.type === 'host.init') return;
+      if (!acceptedHostMessageTypes.has(message.type)) return;
+      if (lifecycle === embedLifecycleStates.authenticating || lifecycle === embedLifecycleStates.destroyed) return;
+      if (lifecycle === embedLifecycleStates.renewing && !['session.renew.response', 'destroy'].includes(message.type)) return;
+      if (message.type === 'session.renew.response' && (
+        lifecycle !== embedLifecycleStates.renewing
+        || !embedPendingRenewReplyToRef.current
+        || message.replyTo !== embedPendingRenewReplyToRef.current
+      )) return;
+      if (message.sequence <= embedInboundSequenceRef.current) return;
+      embedInboundSequenceRef.current = message.sequence;
+
+      if (message.type === 'context.replace') await replaceContext(message);
+      if (message.type === 'theme.update' && embedCapabilitiesRef.current.includes('THEME_TOKENS')) {
+        const appliedTokens = applyEmbedTheme(message.payload.theme || {});
+        sendEmbedMessage('action.completed', { action: 'theme.update', appliedTokens: Object.keys(appliedTokens) }, message.messageId);
+      }
+      if (message.type === 'route.open') setView(normalizeEmbedView(message.payload.view));
+      if (message.type === 'visibility.change') {
+        sendEmbedMessage('action.completed', { action: 'visibility.change', visible: Boolean(message.payload.visible) }, message.messageId);
+      }
+      if (message.type === 'session.renew.response') await renewSession(message);
+      if (message.type === 'destroy') destroySession();
+    }
+
+    function enqueueHostMessage(message, transport) {
+      embedMessageQueueRef.current = embedMessageQueueRef.current
+        .then(() => processHostMessage(message, transport))
+        .catch((error) => {
+          if (isCurrentEffect() && embedLifecycleRef.current !== embedLifecycleStates.failed) {
+            failSession('嵌入会话异常', error.code || error.message || 'EMBED_MESSAGE_FAILED');
+          }
+        });
+    }
+
+    function handleHostMessage(event) {
+      if (
+        event.source !== window.parent
+        || !embedConfig.parentOrigin
+        || event.origin !== embedConfig.parentOrigin
+        || !isEmbedEnvelope(event.data)
+      ) return;
+      enqueueHostMessage(event.data, { transport: 'window', source: 'window', port: event.ports?.[0] || null });
+    }
+
+    embedLifecycleRef.current = embedLifecycleStates.idle;
+    embedSessionRef.current = null;
+    embedInboundSequenceRef.current = 0;
+    embedContextVersionRef.current = 0;
+    embedContextEtagRef.current = null;
+    embedNoncesRef.current.clear();
+    embedMessageQueueRef.current = Promise.resolve();
+    clearAuthorization('等待 ATS 会话', embedLifecycleStates.idle);
+    closeMessagePort();
+    window.addEventListener('message', handleHostMessage);
+    if (window.parent !== window && embedConfig.parentOrigin) {
+      sendEmbedMessage('embed.ready', {
+        supportedProtocolVersions: ['1.0'],
+        supportedSurfaces: ['sidebar', 'workspace'],
+      });
+    } else {
+      setEmbedStatus('嵌入预览');
+    }
+    return () => {
+      window.removeEventListener('message', handleHostMessage);
+      clearAllTimers();
+      embedOperationAbortRef.current?.abort();
+      embedOperationAbortRef.current = null;
+      embedLifecycleRef.current = embedLifecycleStates.destroyed;
+      embedAuthModeRef.current = 'idle';
+      embedAccessTokenRef.current = null;
+      embedHostContextRef.current = null;
+      embedContextEtagRef.current = null;
+      embedCapabilitiesRef.current = [];
+      embedHostCapabilitiesRef.current = [];
+      embedPendingRenewReplyToRef.current = null;
+      embedSessionRef.current = null;
+      embedInboundSequenceRef.current = 0;
+      embedContextVersionRef.current = 0;
+      embedNoncesRef.current.clear();
+      closeMessagePort();
+      if (embedEffectGenerationRef.current === generation) embedEffectGenerationRef.current += 1;
+    };
+  }, [embedConfig.isEmbedded, embedConfig.parentOrigin]);
+  useEffect(() => {
+    if (embedConfig.isEmbedded && embedSessionRef.current) {
+      sendEmbedMessage('route.changed', { view, surface: embedConfig.surface });
+    }
+  }, [view, embedConfig.isEmbedded, embedConfig.surface]);
   useEffect(() => {
     function onKeyDown(event) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -582,6 +1235,34 @@ function App() {
     setToast(message);
     window.clearTimeout(window.__smartToast);
     window.__smartToast = window.setTimeout(() => setToast(''), 2600);
+  }
+
+  function sendEmbedMessage(type, payload = {}, replyTo = null) {
+    if (!embedConfig.isEmbedded || window.parent === window || !embedConfig.parentOrigin) return null;
+    embedSequenceRef.current += 1;
+    const message = createEmbedEnvelope(type, payload, {
+      sessionId: embedSessionRef.current,
+      sequence: embedSequenceRef.current,
+      replyTo,
+    });
+    try {
+      if (embedPortRef.current) embedPortRef.current.postMessage(message);
+      else window.parent.postMessage(message, embedConfig.parentOrigin);
+    } catch {
+      embedPortRef.current?.close();
+      embedPortRef.current = null;
+      return null;
+    }
+    return message.messageId;
+  }
+
+  function requestHostNavigation(intent) {
+    sendEmbedMessage('navigation.requested', {
+      intent,
+      jobRef: hostContext?.jobRef || null,
+      candidateRef: hostContext?.candidateRef || null,
+      returnIntent: hostContext?.returnIntent || 'return_to_context',
+    });
   }
 
   function pushEvent(title, detail, type = 'human', taskId = activeTask?.code) {
@@ -771,19 +1452,17 @@ function App() {
   };
 
   return (
-    <div className="app-shell">
-      <Sidebar view={view} setView={setView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />
+    <div className={classNames('app-shell', embedConfig.isEmbedded ? 'shell-embed' : 'shell-standalone', embedConfig.isEmbedded && `surface-${embedConfig.surface}`)}>
+      {!embedConfig.isEmbedded && <Sidebar view={view} setView={setView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />}
       <div className="app-column">
-        <Topbar setView={setView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />
-        <main className={classNames('main-content', `view-${view}`)}>
-          {view === 'workspace' && <Workspace {...context} />}
-          {view === 'roleplan' && <RolePlan {...context} />}
-          {view === 'tasks' && <Tasks {...context} />}
-          {view === 'talent' && <Talent {...context} />}
-          {view === 'interviews' && <Interviews {...context} />}
-          {view === 'evaluation' && <Evaluation {...context} />}
-          {view === 'knowledge' && <Knowledge {...context} />}
-          {view === 'audit' && <Audit {...context} />}
+        {!embedConfig.isEmbedded && <Topbar setView={setView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />}
+        {embedConfig.isEmbedded && <HostContextBar context={hostContext} activeTask={activeTask} candidate={candidate} status={embedStatus} surface={embedConfig.surface} onOpenWorkspace={() => requestHostNavigation('open_workspace')} onReturnToHost={() => requestHostNavigation('return_to_context')} />}
+        <main className={classNames('main-content', `view-${view}`, embedConfig.surface === 'sidebar' && 'embed-sidebar-main')}>
+          {embedConfig.isEmbedded && !hostContext
+            ? <EmbedGate status={embedStatus} />
+            : embedConfig.isEmbedded && embedConfig.surface === 'sidebar'
+            ? <EmbedSidebar {...context} onOpenWorkspace={() => requestHostNavigation('open_workspace')} />
+            : <AppView view={view} context={context} />}
         </main>
       </div>
       {modalOpen && <KnowledgeModal onClose={() => setModalOpen(false)} onSubmit={addKnowledge} />}

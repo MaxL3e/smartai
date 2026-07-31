@@ -1,0 +1,1661 @@
+{
+  "asyncapi": "3.0.0",
+  "id": "urn:smartai:asyncapi:events:v1",
+  "info": {
+    "title": "SmartAI Platform Events",
+    "version": "1.0.0",
+    "description": "SmartAI 跨模块、跨运行时异步消息契约。平台消息使用本契约；Celery 私有 task protocol 不属于本契约，必须由 ai-dispatcher 与 AICommand/AIResult 互相转换。"
+  },
+  "defaultContentType": "application/json",
+  "servers": {
+    "rabbitmq": {
+      "host": "rabbitmq.internal:5671",
+      "protocol": "amqps",
+      "description": "生产地址由部署配置覆盖。服务身份按 exchange 和 queue 授予最小权限。",
+      "security": [
+        {
+          "$ref": "#/components/securitySchemes/mutualTls"
+        }
+      ],
+      "bindings": {
+        "amqp": {
+          "vhost": "/smartai",
+          "bindingVersion": "0.3.0"
+        }
+      }
+    }
+  },
+  "channels": {
+    "integrationNormalizedV1": {
+      "address": "integration.normalized.v1.{sourceSystem}.{resourceType}.{eventName}",
+      "title": "归一化外部 Webhook 事件",
+      "description": "连接器完成验签、原始事件落库和供应商字段归一化后发布。供应商事件不得直接写入核心聚合。",
+      "parameters": {
+        "sourceSystem": {
+          "description": "标准化来源系统代码，例如 customer-ats 或 interview-provider。"
+        },
+        "resourceType": {
+          "description": "小写资源类型，例如 job、application、interview。"
+        },
+        "eventName": {
+          "description": "标准化事件名，例如 updated、completed、rejected。"
+        }
+      },
+      "messages": {
+        "NormalizedWebhookEvent": {
+          "$ref": "#/components/messages/NormalizedWebhookEvent"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.integration.events",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueue": "smartai.integration.normalized.v1.core",
+        "retryDelaysSeconds": [5, 30, 300, 1800, 7200],
+        "maxDeliveryAttempts": 5,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueue": "smartai.integration.normalized.v1.core.dlq"
+      }
+    },
+    "domainEventsV1": {
+      "address": "domain.v1.{boundedContext}.{eventName}",
+      "title": "内部领域事件",
+      "description": "由业务核心事务内 Outbox 发布的过去式领域事实。每个消费者使用自己的 queue、Inbox 和 DLQ。",
+      "parameters": {
+        "boundedContext": {
+          "description": "限界上下文，例如 recruitment、talent、interview、knowledge。"
+        },
+        "eventName": {
+          "description": "过去式事件名，例如 PositionPlanApproved、MatchRunCompleted。"
+        }
+      },
+      "messages": {
+        "DomainEvent": {
+          "$ref": "#/components/messages/DomainEvent"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.domain.events",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueuePattern": "smartai.domain.v1.{consumerName}",
+        "retryDelaysSeconds": [5, 30, 300, 1800, 7200],
+        "maxDeliveryAttempts": 5,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueuePattern": "smartai.domain.v1.{consumerName}.dlq"
+      }
+    },
+    "aiCommandsV1": {
+      "address": "ai.command.v1.{action}",
+      "title": "AI 平台命令",
+      "description": "Java Core 发往 Python ai-dispatcher 的平台命令。dispatcher 写 Inbox 后才可确认消息，并将命令转换为 Celery 私有任务。",
+      "parameters": {
+        "action": {
+          "description": "动作代码，例如 document.parse、knowledge.index、knowledge.retrieve、talent.retrieve、evidence.extract、content.generate。"
+        }
+      },
+      "messages": {
+        "AICommand": {
+          "$ref": "#/components/messages/AICommand"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.ai.commands",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueue": "smartai.ai.commands.v1.dispatcher",
+        "retryScope": "仅保证 dispatcher 幂等接收；计算重试由 Celery 私有队列负责",
+        "retryDelaysSeconds": [5, 30, 300, 1800, 7200],
+        "maxDeliveryAttempts": 5,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueue": "smartai.ai.commands.v1.dispatcher.dlq",
+        "celeryBoundary": "dispatcher 使用 tenantId + businessKey 生成稳定 Celery task id；Java 不发布 Celery task protocol"
+      }
+    },
+    "aiResultsV1": {
+      "address": "ai.result.v1.{action}.{outcome}",
+      "title": "AI 平台结果",
+      "description": "Python result-publisher 将 Celery 结果转换为平台结果事件，Java Core 通过 Inbox 幂等消费。",
+      "parameters": {
+        "action": {
+          "description": "与命令一致的动作代码。"
+        },
+        "outcome": {
+          "description": "小写结果：succeeded、partial、failed 或 cancelled。"
+        }
+      },
+      "messages": {
+        "AIResult": {
+          "$ref": "#/components/messages/AIResult"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.ai.results",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueue": "smartai.ai.results.v1.core",
+        "retryDelaysSeconds": [5, 30, 300, 1800],
+        "maxDeliveryAttempts": 4,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueue": "smartai.ai.results.v1.core.dlq"
+      }
+    },
+    "notificationCommandsV1": {
+      "address": "notification.command.v1.{channel}.{action}",
+      "title": "通知命令",
+      "description": "发送模板消息、提醒或撤销操作。收件人和模板变量必须通过加密 payloadRef 传递。",
+      "parameters": {
+        "channel": {
+          "description": "email、sms、enterprise-message 或 provider-defined。"
+        },
+        "action": {
+          "description": "send、remind 或 cancel。"
+        }
+      },
+      "messages": {
+        "NotificationCommand": {
+          "$ref": "#/components/messages/NotificationCommand"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.notification.commands",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueue": "smartai.notification.commands.v1.dispatcher",
+        "retryPolicy": "外部结果未知时先查后重试；禁止仅因超时重复发送",
+        "retryDelaysSeconds": [30, 300, 1800],
+        "maxDeliveryAttempts": 3,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueue": "smartai.notification.commands.v1.dispatcher.dlq"
+      }
+    },
+    "notificationResultsV1": {
+      "address": "notification.result.v1.{channel}.{outcome}",
+      "title": "通知结果",
+      "description": "通知渠道返回的受理、送达、退信、失败或未知状态。",
+      "parameters": {
+        "channel": {
+          "description": "标准化消息渠道。"
+        },
+        "outcome": {
+          "description": "accepted、delivered、bounced、failed、cancelled 或 unknown。"
+        }
+      },
+      "messages": {
+        "NotificationResult": {
+          "$ref": "#/components/messages/NotificationResult"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.notification.results",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueue": "smartai.notification.results.v1.core",
+        "retryDelaysSeconds": [5, 30, 300, 1800],
+        "maxDeliveryAttempts": 4,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueue": "smartai.notification.results.v1.core.dlq"
+      }
+    },
+    "connectorResultsV1": {
+      "address": "connector.result.v1.{connectorType}.{operation}.{outcome}",
+      "title": "连接器操作结果",
+      "description": "ATS、人才库、在线面试、消息和审批连接器完成外部操作后发布的标准结果。",
+      "parameters": {
+        "connectorType": {
+          "description": "ats、talent-pool、interview、message、approval 或 rpa。"
+        },
+        "operation": {
+          "description": "标准连接器操作代码。"
+        },
+        "outcome": {
+          "description": "succeeded、partial、failed、conflict 或 unknown。"
+        }
+      },
+      "messages": {
+        "ConnectorResult": {
+          "$ref": "#/components/messages/ConnectorResult"
+        }
+      },
+      "bindings": {
+        "amqp": {
+          "is": "routingKey",
+          "exchange": {
+            "name": "smartai.connector.results",
+            "type": "topic",
+            "durable": true,
+            "autoDelete": false,
+            "vhost": "/smartai"
+          },
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "x-smartai-delivery": {
+        "consumerQueue": "smartai.connector.results.v1.core",
+        "retryDelaysSeconds": [5, 30, 300, 1800],
+        "maxDeliveryAttempts": 4,
+        "deadLetterExchange": "smartai.dlx",
+        "deadLetterQueue": "smartai.connector.results.v1.core.dlq"
+      }
+    }
+  },
+  "operations": {
+    "connectorPublishesNormalizedWebhook": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/integrationNormalizedV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationNormalizedV1/messages/NormalizedWebhookEvent"
+        }
+      ]
+    },
+    "coreConsumesNormalizedWebhook": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/integrationNormalizedV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/integrationNormalizedV1/messages/NormalizedWebhookEvent"
+        }
+      ]
+    },
+    "corePublishesDomainEvent": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/domainEventsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/domainEventsV1/messages/DomainEvent"
+        }
+      ]
+    },
+    "internalConsumerReceivesDomainEvent": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/domainEventsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/domainEventsV1/messages/DomainEvent"
+        }
+      ]
+    },
+    "corePublishesAICommand": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/aiCommandsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/aiCommandsV1/messages/AICommand"
+        }
+      ]
+    },
+    "aiDispatcherReceivesAICommand": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/aiCommandsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/aiCommandsV1/messages/AICommand"
+        }
+      ]
+    },
+    "aiResultPublisherSendsAIResult": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/aiResultsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/aiResultsV1/messages/AIResult"
+        }
+      ]
+    },
+    "coreReceivesAIResult": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/aiResultsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/aiResultsV1/messages/AIResult"
+        }
+      ]
+    },
+    "corePublishesNotificationCommand": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/notificationCommandsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notificationCommandsV1/messages/NotificationCommand"
+        }
+      ]
+    },
+    "notificationDispatcherReceivesCommand": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/notificationCommandsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notificationCommandsV1/messages/NotificationCommand"
+        }
+      ]
+    },
+    "notificationDispatcherPublishesResult": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/notificationResultsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notificationResultsV1/messages/NotificationResult"
+        }
+      ]
+    },
+    "coreReceivesNotificationResult": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/notificationResultsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notificationResultsV1/messages/NotificationResult"
+        }
+      ]
+    },
+    "connectorPublishesResult": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/connectorResultsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/connectorResultsV1/messages/ConnectorResult"
+        }
+      ]
+    },
+    "coreReceivesConnectorResult": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/connectorResultsV1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/connectorResultsV1/messages/ConnectorResult"
+        }
+      ]
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "mutualTls": {
+        "type": "X509",
+        "description": "RabbitMQ 服务身份使用客户或平台 CA 签发的短期证书；每个生产者和消费者使用独立身份。"
+      }
+    },
+    "messages": {
+      "NormalizedWebhookEvent": {
+        "name": "NormalizedWebhookEvent",
+        "title": "归一化 Webhook 事件",
+        "summary": "保留来源事件和资源版本，由反腐层转换为领域命令或领域事件。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/NormalizedWebhookEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.integration.normalized.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      },
+      "DomainEvent": {
+        "name": "DomainEvent",
+        "title": "内部领域事件",
+        "summary": "由已提交业务事务的 Outbox 发布，事件名使用过去式。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/DomainEventEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.domain.event.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      },
+      "AICommand": {
+        "name": "AICommand",
+        "title": "AI 平台命令",
+        "summary": "引用加密输入对象；不得内联简历、知识正文、面试转写或提示词。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/AICommandEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.ai.command.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      },
+      "AIResult": {
+        "name": "AIResult",
+        "title": "AI 平台结果",
+        "summary": "结果正文通过 payloadRef 返回；失败结果仅携带脱敏错误。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/AIResultEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.ai.result.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      },
+      "NotificationCommand": {
+        "name": "NotificationCommand",
+        "title": "通知命令",
+        "summary": "收件人与模板变量仅存在加密 payloadRef 中。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/NotificationCommandEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.notification.command.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      },
+      "NotificationResult": {
+        "name": "NotificationResult",
+        "title": "通知结果",
+        "summary": "标准化渠道交付状态，不包含联系方式和消息正文。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/NotificationResultEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.notification.result.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      },
+      "ConnectorResult": {
+        "name": "ConnectorResult",
+        "title": "连接器结果",
+        "summary": "标准化外部副作用结果，保留业务操作 ID 和外部资源版本。",
+        "contentType": "application/json",
+        "headers": {
+          "$ref": "#/components/schemas/CommonHeaders"
+        },
+        "payload": {
+          "$ref": "#/components/schemas/ConnectorResultEnvelope"
+        },
+        "correlationId": {
+          "location": "$message.payload#/correlationId"
+        },
+        "bindings": {
+          "amqp": {
+            "contentEncoding": "utf-8",
+            "messageType": "smartai.connector.result.v1",
+            "bindingVersion": "0.3.0"
+          }
+        }
+      }
+    },
+    "schemas": {
+      "CommonHeaders": {
+        "type": "object",
+        "required": [
+          "content-type",
+          "x-smartai-message-id",
+          "x-smartai-schema-version",
+          "x-smartai-delivery-attempt",
+          "traceparent"
+        ],
+        "properties": {
+          "content-type": {
+            "const": "application/json"
+          },
+          "x-smartai-message-id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "x-smartai-schema-version": {
+            "type": "string",
+            "pattern": "^1\\.[0-9]+$"
+          },
+          "x-smartai-delivery-attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "x-smartai-first-published-at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "traceparent": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+          },
+          "tracestate": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "additionalProperties": true,
+        "description": "允许 RabbitMQ 注入 x-death、x-first-death-* 等 Broker 头；应用自定义头仍必须使用 x-smartai- 前缀。"
+      },
+      "BaseEnvelope": {
+        "type": "object",
+        "required": [
+          "messageId",
+          "messageClass",
+          "type",
+          "schemaVersion",
+          "tenantId",
+          "producer",
+          "aggregate",
+          "correlationId",
+          "causationId",
+          "traceparent",
+          "businessKey",
+          "idempotencyKey",
+          "occurredAt",
+          "publishedAt",
+          "dataClassification"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "逻辑消息 ID。Broker 重投、延迟重试和重新入队必须保持不变。"
+          },
+          "messageClass": {
+            "type": "string",
+            "enum": [
+              "INTEGRATION_EVENT",
+              "DOMAIN_EVENT",
+              "AI_COMMAND",
+              "AI_RESULT",
+              "NOTIFICATION_COMMAND",
+              "NOTIFICATION_RESULT",
+              "CONNECTOR_RESULT"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z0-9]+\\.v1$",
+            "maxLength": 120,
+            "description": "稳定的消息类型；领域事件使用过去式，命令使用 Requested，具体语态由 CI 命名规则校验。"
+          },
+          "schemaVersion": {
+            "type": "string",
+            "pattern": "^1\\.[0-9]+$",
+            "description": "消息 Schema 的主次版本。routing key 中的 v1 对应主版本。"
+          },
+          "tenantId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "producer": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,63}$"
+          },
+          "aggregate": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "correlationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "贯穿招聘任务或工作流的关联标识。"
+          },
+          "causationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "直接触发本消息的命令、消息或 source event 标识。"
+          },
+          "traceparent": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+          },
+          "tracestate": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "businessKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "稳定业务操作键；业务有效期内不可因传输记录到期而复用。"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "生产者命令幂等键。消费者仍按 tenantId + consumerName + messageId 写 Inbox。"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dataClassification": {
+            "type": "string",
+            "enum": [
+              "INTERNAL",
+              "CONFIDENTIAL",
+              "RESTRICTED"
+            ]
+          },
+          "payloadRef": {
+            "$ref": "#/components/schemas/PayloadRef"
+          }
+        }
+      },
+      "ResourceRef": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "version"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z0-9]{1,63}$"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "version": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayloadRef": {
+        "type": "object",
+        "required": [
+          "ref",
+          "sha256",
+          "contentType",
+          "sizeBytes",
+          "classification",
+          "schemaRef"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^object://[A-Za-z0-9][A-Za-z0-9._/-]{1,500}$",
+            "description": "租户隔离对象的非公开引用；不得使用预签名 URL、HTTP URL 或文件路径。"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "contentType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1073741824
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "INTERNAL",
+              "CONFIDENTIAL",
+              "RESTRICTED"
+            ]
+          },
+          "schemaRef": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]+/v[1-9][0-9]*$",
+            "description": "对象内容的独立 Schema，例如 smartai.ai.evidence-input/v1。"
+          },
+          "encryptionKeyRef": {
+            "type": "string",
+            "maxLength": 240,
+            "description": "仅允许 KMS/Vault 密钥引用，不得包含密钥材料。"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NormalizedWebhookEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payloadRef",
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "INTEGRATION_EVENT"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NormalizedWebhookPayload"
+              }
+            }
+          }
+        ]
+      },
+      "NormalizedWebhookPayload": {
+        "type": "object",
+        "required": [
+          "connectorId",
+          "sourceSystem",
+          "sourceEventId",
+          "providerEventType",
+          "providerEventVersion",
+          "resource",
+          "providerOccurredAt",
+          "receivedAt",
+          "signatureVerified"
+        ],
+        "properties": {
+          "connectorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "sourceSystem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceEventId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "providerEventType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "providerEventVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "providerOccurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "signatureVerified": {
+            "const": true
+          },
+          "normalizedStatus": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "externalVersion": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DomainEventEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "DOMAIN_EVENT"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/DomainEventPayload"
+              }
+            }
+          }
+        ]
+      },
+      "DomainEventPayload": {
+        "type": "object",
+        "required": [
+          "boundedContext",
+          "eventName",
+          "actor",
+          "references"
+        ],
+        "properties": {
+          "boundedContext": {
+            "type": "string",
+            "enum": [
+              "identity",
+              "recruitment",
+              "talent",
+              "interview",
+              "knowledge",
+              "agent",
+              "integration",
+              "audit"
+            ]
+          },
+          "eventName": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z0-9]+$",
+            "maxLength": 100
+          },
+          "actor": {
+            "$ref": "#/components/schemas/ActorRef"
+          },
+          "references": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/ResourceRef"
+            }
+          },
+          "changeSummary": {
+            "type": "object",
+            "description": "仅允许非敏感标量、枚举和资源引用；禁止内联文档正文和候选人个人信息。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AICommandEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payloadRef",
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "AI_COMMAND"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/AICommandPayload"
+              }
+            }
+          }
+        ]
+      },
+      "AICommandPayload": {
+        "type": "object",
+        "required": [
+          "action",
+          "agentRunId",
+          "agentStepId",
+          "workflowVersion",
+          "inputHash",
+          "resultSchemaRef",
+          "deadlineAt"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "DOCUMENT_PARSE",
+              "KNOWLEDGE_INDEX",
+              "KNOWLEDGE_RETRIEVE",
+              "TALENT_RETRIEVE",
+              "EVIDENCE_EXTRACT",
+              "CONTENT_GENERATE"
+            ]
+          },
+          "agentRunId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agentStepId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "inputHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "resultSchemaRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "modelPolicyRef": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "deadlineAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "options": {
+            "type": "object",
+            "description": "仅允许通过对应 action Schema 校验的非敏感参数。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AIResultEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "AI_RESULT"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/AIResultPayload"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "payload": {
+                      "properties": {
+                        "outcome": {
+                          "enum": [
+                            "SUCCEEDED",
+                            "PARTIAL"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "outcome"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "payloadRef"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "AIResultPayload": {
+        "type": "object",
+        "required": [
+          "action",
+          "outcome",
+          "commandMessageId",
+          "agentRunId",
+          "agentStepId",
+          "startedAt",
+          "finishedAt",
+          "metrics"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "DOCUMENT_PARSE",
+              "KNOWLEDGE_INDEX",
+              "KNOWLEDGE_RETRIEVE",
+              "TALENT_RETRIEVE",
+              "EVIDENCE_EXTRACT",
+              "CONTENT_GENERATE"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "PARTIAL",
+              "FAILED",
+              "CANCELLED"
+            ]
+          },
+          "commandMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agentRunId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agentStepId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/ExecutionMetrics"
+          },
+          "error": {
+            "$ref": "#/components/schemas/SafeError"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotificationCommandEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payloadRef",
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "NOTIFICATION_COMMAND"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NotificationCommandPayload"
+              }
+            }
+          }
+        ]
+      },
+      "NotificationCommandPayload": {
+        "type": "object",
+        "required": [
+          "notificationId",
+          "taskCandidateId",
+          "channel",
+          "action",
+          "templateRef",
+          "connectorId",
+          "sendAfter"
+        ],
+        "properties": {
+          "notificationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "taskCandidateId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "EMAIL",
+              "SMS",
+              "ENTERPRISE_MESSAGE"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "SEND",
+              "REMIND",
+              "CANCEL"
+            ]
+          },
+          "templateRef": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "connectorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "sendAfter": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotificationResultEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "NOTIFICATION_RESULT"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NotificationResultPayload"
+              }
+            }
+          }
+        ]
+      },
+      "NotificationResultPayload": {
+        "type": "object",
+        "required": [
+          "notificationId",
+          "commandMessageId",
+          "channel",
+          "outcome",
+          "provider",
+          "providerOccurredAt"
+        ],
+        "properties": {
+          "notificationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "commandMessageId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "EMAIL",
+              "SMS",
+              "ENTERPRISE_MESSAGE"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "ACCEPTED",
+              "DELIVERED",
+              "BOUNCED",
+              "FAILED",
+              "CANCELLED",
+              "UNKNOWN"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "externalMessageRef": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "providerOccurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "$ref": "#/components/schemas/SafeError"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorResultEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEnvelope"
+          },
+          {
+            "type": "object",
+            "required": [
+              "payload"
+            ],
+            "properties": {
+              "messageClass": {
+                "const": "CONNECTOR_RESULT"
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ConnectorResultPayload"
+              }
+            }
+          }
+        ]
+      },
+      "ConnectorResultPayload": {
+        "type": "object",
+        "required": [
+          "connectorId",
+          "connectorType",
+          "operation",
+          "businessOperationId",
+          "outcome",
+          "startedAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "connectorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "connectorType": {
+            "type": "string",
+            "enum": [
+              "ATS",
+              "TALENT_POOL",
+              "INTERVIEW",
+              "MESSAGE",
+              "APPROVAL",
+              "RPA"
+            ]
+          },
+          "operation": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,79}$"
+          },
+          "businessOperationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "PARTIAL",
+              "FAILED",
+              "CONFLICT",
+              "UNKNOWN"
+            ]
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          },
+          "externalRef": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "externalVersion": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "error": {
+            "$ref": "#/components/schemas/SafeError"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActorRef": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "USER",
+              "AGENT",
+              "SYSTEM",
+              "CONNECTOR"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExecutionMetrics": {
+        "type": "object",
+        "properties": {
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inputUnits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outputUnits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "modelRevision": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "additionalProperties": false
+      },
+      "SafeError": {
+        "type": "object",
+        "required": [
+          "code",
+          "retryable",
+          "summary"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,79}$"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "脱敏摘要；不得包含供应商响应正文、个人信息、令牌、提示词或堆栈。"
+          },
+          "detailsRef": {
+            "$ref": "#/components/schemas/PayloadRef"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "x-smartai-topology": {
+    "deliveryGuarantee": "AT_LEAST_ONCE",
+    "publisherConfirm": true,
+    "mandatoryPublish": true,
+    "consumerAck": "消费者在业务事务、Inbox 和必要 Outbox 同时提交后手动 ACK",
+    "prefetchPolicy": "按处理类型配置；不得用无限 prefetch 隐藏积压",
+    "platformExchanges": [
+      {
+        "name": "smartai.integration.events",
+        "type": "topic",
+        "owner": "integration"
+      },
+      {
+        "name": "smartai.domain.events",
+        "type": "topic",
+        "owner": "core"
+      },
+      {
+        "name": "smartai.ai.commands",
+        "type": "topic",
+        "owner": "core"
+      },
+      {
+        "name": "smartai.ai.results",
+        "type": "topic",
+        "owner": "ai-service"
+      },
+      {
+        "name": "smartai.notification.commands",
+        "type": "topic",
+        "owner": "core"
+      },
+      {
+        "name": "smartai.notification.results",
+        "type": "topic",
+        "owner": "integration"
+      },
+      {
+        "name": "smartai.connector.results",
+        "type": "topic",
+        "owner": "integration"
+      },
+      {
+        "name": "smartai.retry",
+        "type": "topic",
+        "owner": "platform-infrastructure"
+      },
+      {
+        "name": "smartai.dlx",
+        "type": "topic",
+        "owner": "platform-infrastructure"
+      }
+    ],
+    "retryRules": [
+      "Broker 重试保持 messageId、businessKey、idempotencyKey、occurredAt 和 first-published-at 不变，只增加 delivery attempt。",
+      "Schema 主版本不支持、签名或租户校验失败、权限拒绝和确定性数据错误不得自动重试，直接进入所属 DLQ。",
+      "暂时网络错误、限流和服务不可用才进入延迟重试；遵循 Retry-After，并使用抖动。",
+      "AI 平台命令在 dispatcher 写 Inbox 并创建稳定 Celery task 后结束平台投递；Celery 仅重试无外部副作用的计算。",
+      "通知或连接器调用结果未知时必须先查询下游；平台重试和供应商重试不得同时重复同一副作用。",
+      "DLQ 只能由具备权限的人工或补偿工具检查后重放；DLQ 之间不得自动搬运。"
+    ]
+  },
+  "x-smartai-schema-governance": {
+    "routingMajorVersion": "routing key 中 v1 固定对应 Schema 主版本 1",
+    "minorCompatibility": "同一主版本只允许新增可选字段或新增枚举处理分支；消费者必须忽略未知可选字段并保留未知外部枚举源值",
+    "breakingChange": "删除字段、改变语义、收紧已有合法值或更换幂等语义必须发布 v2 channel/exchange binding，并提供双写迁移期",
+    "registry": "CI 将本文件发布到契约制品库；生产者与消费者构建必须锁定精确版本并执行兼容性检查",
+    "unsupportedSchema": "消费者不得猜测解析；不支持的主版本立即 NACK 到所属 DLQ，并产生告警"
+  },
+  "x-smartai-idempotency": {
+    "transportDedupeKey": "tenantId + consumerName + messageId",
+    "businessDedupeKey": "tenantId + businessKey",
+    "sourceWebhookDedupeKey": "tenantId + connectorId + sourceEventId",
+    "celeryTaskKey": "tenantId + businessKey",
+    "resultCausation": "AIResult、NotificationResult 和 ConnectorResult 的 causationId 必须指向触发命令 messageId",
+    "duplicateHandling": "已成功处理的重复消息直接 ACK 并返回首次处理引用，不重复执行业务副作用",
+    "retention": "Inbox 至少覆盖消息最大重试期与审计策略；BusinessOperation 在业务有效期内保持唯一，不随 Inbox 或传输幂等记录到期"
+  },
+  "x-smartai-envelope-integrity": {
+    "headerBodyEquality": [
+      "x-smartai-message-id 必须等于正文 messageId",
+      "x-smartai-schema-version 必须等于正文 schemaVersion",
+      "Header traceparent 必须等于正文 traceparent"
+    ],
+    "routingKeyValidation": "生产者和消费者均校验 routing key 的主版本、动作和结果与正文 schemaVersion、messageClass 和 payload 一致",
+    "retryMutation": "Broker 或重试发布器只能增加 delivery attempt 和 Broker x-death 类头，不得修改正文、messageId、businessKey、idempotencyKey、correlationId 或 causationId",
+    "oversizeHandling": "超过 maxInlineMessageBytes 的消息拒绝发布；不得由 Broker 自动截断，正文改存对象存储并使用 payloadRef"
+  },
+  "x-smartai-sensitive-data-policy": {
+    "maxInlineMessageBytes": 262144,
+    "allowedInlineData": "标识、状态、版本、哈希、时间、非敏感指标和资源引用",
+    "forbiddenInlineData": [
+      "简历正文或附件",
+      "知识文档正文",
+      "面试音视频或转写",
+      "姓名、手机号、邮箱、证件号、住址和照片",
+      "消息正文、收件人和模板变量",
+      "模型提示词、完整模型输入输出",
+      "访问令牌、Cookie、API 密钥、签名密钥和预签名 URL",
+      "供应商原始响应正文、异常堆栈和数据库连接信息"
+    ],
+    "payloadRefRules": [
+      "敏感或大体积内容必须写入租户隔离、加密对象存储，并以 PayloadRef 引用。",
+      "消费者必须校验 tenantId、对象 ACL、sha256、sizeBytes、classification、schemaRef 和有效期后再读取。",
+      "payloadRef.ref 只能使用 opaque object:// 引用，不得携带可直接访问对象的签名参数。",
+      "日志、指标、DLQ 管理页和追踪系统只记录 payloadRef 与哈希，不自动展开对象内容。"
+    ]
+  }
+}

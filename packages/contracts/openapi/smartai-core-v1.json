@@ -1,0 +1,3710 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "知聘招聘智能体 Core API",
+    "version": "1.0.0",
+    "summary": "招聘智能体生产试点 MVP 的权威 HTTP 契约",
+    "description": "覆盖 ATS 嵌入会话、招聘任务、岗位方案、人才匹配、候选名单确认、在线面试、综合评价、人工门禁、知识、审计和连接器能力。服务端状态、权限、版本和人工门禁是唯一事实源；客户端不得自行推进关键业务状态。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前部署环境"
+    }
+  ],
+  "tags": [
+    { "name": "Embed", "description": "ATS 宿主嵌入、短期令牌和独立页降级" },
+    { "name": "RequirementDrafts", "description": "任务创建前的自然语言需求草案" },
+    { "name": "RecruitmentTasks", "description": "招聘任务及三层状态" },
+    { "name": "PositionPlans", "description": "岗位方案、评分卡和人工审核" },
+    { "name": "JobPublications", "description": "经过人工门禁的外部岗位发布" },
+    { "name": "Matching", "description": "候选关系、匹配运行、结果和证据" },
+    { "name": "CandidateLists", "description": "人工确认的候选人名单版本" },
+    { "name": "Interviews", "description": "在线面试批次、邀请和结果" },
+    { "name": "Evaluations", "description": "可解释综合评价和人工结论" },
+    { "name": "HumanCheckpoints", "description": "不可变人工门禁决定" },
+    { "name": "Knowledge", "description": "企业知识、版本、解析和发布" },
+    { "name": "Audit", "description": "不可变审计事件查询" },
+    { "name": "Connectors", "description": "客户连接器和能力协商" }
+  ],
+  "security": [
+    { "BearerAuth": [] }
+  ],
+  "paths": {
+    "/api/embed/v1/sessions": {
+      "post": {
+        "tags": ["Embed"],
+        "summary": "创建一次 ATS 嵌入会话",
+        "description": "仅供 ATS 后端调用。服务端验证用户委托断言、精确父页面 Origin、上下文和宿主能力，返回 30 至 60 秒内单次有效的引导令牌。",
+        "operationId": "createEmbedSession",
+        "security": [{ "ServiceOAuth": ["embed:session:create"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EmbedSessionCreateRequest" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "嵌入会话已创建",
+            "headers": { "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/EmbedSessionGrant" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/embed/v1/token-exchange": {
+      "post": {
+        "tags": ["Embed"],
+        "summary": "兑换 iframe 短期访问令牌",
+        "description": "一次性引导令牌只能兑换一次。iframe 必须提交从 host.init 消息 event.origin 观察到的父页面 Origin，服务端与会话绑定的 hostOrigin 精确比对。返回的访问令牌仅保存在 iframe 内存，不签发 Refresh Token。",
+        "operationId": "exchangeEmbedToken",
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EmbedTokenExchangeRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "短期访问令牌和有效能力",
+            "headers": {
+              "Cache-Control": { "schema": { "type": "string", "const": "no-store" } },
+              "Pragma": { "schema": { "type": "string", "const": "no-cache" } },
+              "ETag": { "$ref": "#/components/headers/ETag" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/EmbedAccessGrant" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "410": { "$ref": "#/components/responses/Gone" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/embed/v1/sessions/{sessionId}/context-resolutions": {
+      "post": {
+        "tags": ["Embed"],
+        "summary": "解析并鉴权新的 ATS 宿主上下文",
+        "description": "供已认证 iframe 在处理 context.replace 前调用。服务端重新校验父 Origin、租户、组织、资源映射、数据范围、上下文版本和 nonce，只创建短期解析结果，不切换活动上下文。",
+        "operationId": "resolveEmbedContext",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EmbedContextResolveRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "上下文解析成功，尚未替换活动上下文",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/HostContextResolution" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "410": { "$ref": "#/components/responses/Gone" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/embed/v1/sessions/{sessionId}/context": {
+      "put": {
+        "tags": ["Embed"],
+        "summary": "替换已认证嵌入会话的活动上下文",
+        "description": "使用未过期的解析结果原子替换活动上下文。服务端再次校验父 Origin、解析哈希、当前 ETag 和单调递增的 contextVersion；失败时旧上下文不可继续展示。",
+        "operationId": "replaceEmbedContext",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" },
+          { "$ref": "#/components/parameters/IfMatch" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/EmbedContextReplaceRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "活动上下文已替换",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/HostContextResolution" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "410": { "$ref": "#/components/responses/Gone" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/embed/v1/deep-links": {
+      "post": {
+        "tags": ["Embed"],
+        "summary": "创建单次独立页跳转",
+        "description": "生成 60 秒内单次有效的 opaque HTTPS 地址。URL 不包含访问令牌、租户或候选人信息。",
+        "operationId": "createEmbedDeepLink",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/DeepLinkCreateRequest" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "单次跳转已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    { "properties": { "data": { "$ref": "#/components/schemas/DeepLinkGrant" } } }
+                  ]
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/requirement-drafts": {
+      "post": {
+        "tags": ["RequirementDrafts"],
+        "summary": "创建需求草案",
+        "description": "草案不是招聘任务；只有人工确认并执行 convert 后才创建正式任务。",
+        "operationId": "createRequirementDraft",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftCreateRequest" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "草案已创建",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/requirement-drafts/{draftId}": {
+      "parameters": [{ "$ref": "#/components/parameters/DraftId" }],
+      "get": {
+        "tags": ["RequirementDrafts"],
+        "summary": "读取需求草案",
+        "operationId": "getRequirementDraft",
+        "parameters": [{ "$ref": "#/components/parameters/RequestId" }],
+        "responses": {
+          "200": {
+            "description": "需求草案",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["RequirementDrafts"],
+        "summary": "修改未转换的需求草案",
+        "operationId": "updateRequirementDraft",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/RequirementDraftPatchRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "草案已更新",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/requirement-drafts/{draftId}/convert": {
+      "post": {
+        "tags": ["RequirementDrafts", "RecruitmentTasks"],
+        "summary": "人工确认草案并创建招聘任务",
+        "description": "对应人工门禁 G1。确认人来自访问令牌，不接受请求体伪造。相同草案和幂等键只创建一个任务。",
+        "operationId": "convertRequirementDraft",
+        "x-human-gate": "CREATE_TASK",
+        "parameters": [
+          { "$ref": "#/components/parameters/DraftId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftConvertRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "招聘任务已创建",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "410": { "$ref": "#/components/responses/Gone" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks": {
+      "get": {
+        "tags": ["RecruitmentTasks"],
+        "summary": "分页查询有权访问的招聘任务",
+        "operationId": "listRecruitmentTasks",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "businessStage", "in": "query", "schema": { "$ref": "#/components/schemas/BusinessStage" } },
+          { "name": "lifecycleStatus", "in": "query", "schema": { "$ref": "#/components/schemas/LifecycleStatus" } },
+          { "name": "ownerUserId", "in": "query", "schema": { "$ref": "#/components/schemas/Uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "招聘任务页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskPageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "get": {
+        "tags": ["RecruitmentTasks"],
+        "summary": "读取招聘任务",
+        "operationId": "getRecruitmentTask",
+        "parameters": [{ "$ref": "#/components/parameters/RequestId" }],
+        "responses": {
+          "200": {
+            "description": "招聘任务",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["RecruitmentTasks"],
+        "summary": "修改任务非状态字段",
+        "description": "业务阶段和生命周期只能通过领域命令或门禁推进，不接受 PATCH 直接修改。",
+        "operationId": "updateRecruitmentTask",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskPatchRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "招聘任务已更新",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/commands": {
+      "post": {
+        "tags": ["RecruitmentTasks"],
+        "summary": "执行任务生命周期命令",
+        "description": "暂停、恢复、取消、归档、恢复归档或授权重开。技术失败不得通过此接口伪装为业务阶段变化。",
+        "operationId": "commandRecruitmentTask",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskCommandRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "命令已执行或已安全接受",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecruitmentTaskResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/position-plan": {
+      "get": {
+        "tags": ["PositionPlans"],
+        "summary": "读取任务当前岗位方案和评分卡",
+        "operationId": "getCurrentPositionPlan",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前岗位方案版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PositionPlanResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations": {
+      "post": {
+        "tags": ["PositionPlans"],
+        "summary": "生成新的岗位方案草稿版本",
+        "description": "只使用请求中冻结的已发布知识版本。生成不会自动批准方案或推进任务。",
+        "operationId": "generatePositionPlan",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PositionPlanGenerateRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "生成运行已进入队列",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/position-plan-versions/{planVersionId}": {
+      "get": {
+        "tags": ["PositionPlans"],
+        "summary": "读取指定岗位方案历史版本",
+        "operationId": "getPositionPlanVersion",
+        "parameters": [
+          { "$ref": "#/components/parameters/PlanVersionId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "岗位方案历史版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PositionPlanResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["PositionPlans"],
+        "summary": "修改岗位方案草稿和评分卡",
+        "description": "仅 DRAFT 或被退回的版本可修改。权重合计必须为 100，硬条件和评分项分离，已批准版本不可原地修改。",
+        "operationId": "updatePositionPlanVersion",
+        "parameters": [
+          { "$ref": "#/components/parameters/PlanVersionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/PositionPlanPatchRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "岗位方案草稿已更新",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PositionPlanResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/position-plan-versions/{planVersionId}/review-requests": {
+      "post": {
+        "tags": ["PositionPlans", "HumanCheckpoints"],
+        "summary": "提交岗位方案人工审核",
+        "description": "创建 G2 人工门禁并冻结岗位方案、评分卡、知识、提示和规则版本。",
+        "operationId": "requestPositionPlanReview",
+        "x-human-gate": "APPROVE_POSITION_PLAN",
+        "parameters": [
+          { "$ref": "#/components/parameters/PlanVersionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanReviewRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "人工门禁已创建",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/position-plan-versions/{planVersionId}/publication-review-requests": {
+      "post": {
+        "tags": ["JobPublications", "HumanCheckpoints"],
+        "summary": "提交岗位发布人工审批",
+        "description": "创建 G3 人工门禁，冻结公开岗位内容、目标连接器、发布时间、外部岗位版本和客户审批引用，并由服务端计算 inputHash。G2 方案确认不能替代 G3 发布审批。",
+        "operationId": "requestJobPublicationReview",
+        "x-human-gate": "PUBLISH_JOB",
+        "parameters": [
+          { "$ref": "#/components/parameters/PlanVersionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobPublicationReviewRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "G3 岗位发布门禁已创建",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/position-plan-versions/{planVersionId}/publish": {
+      "post": {
+        "tags": ["JobPublications", "HumanCheckpoints", "Connectors"],
+        "summary": "通过已批准门禁发布岗位",
+        "description": "对应 G3。服务端校验 checkpointId 为当前岗位方案的 PUBLISH_JOB 已批准门禁，并以租户、连接器、任务和方案版本组成业务幂等键。连接器调用异步执行，客户端不得以 202 视为已发布成功。",
+        "operationId": "publishPositionPlanVersion",
+        "x-human-gate": "PUBLISH_JOB",
+        "parameters": [
+          { "$ref": "#/components/parameters/PlanVersionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PositionPlanPublishRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "岗位发布已进入异步执行队列",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobPublicationResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/agent-runs/{agentRunId}": {
+      "get": {
+        "tags": ["RecruitmentTasks"],
+        "summary": "读取智能体运行状态和失败摘要",
+        "operationId": "getAgentRun",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgentRunId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "智能体运行",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/match-runs": {
+      "post": {
+        "tags": ["Matching"],
+        "summary": "启动可复现的人才匹配运行",
+        "description": "只允许使用已批准的岗位方案和评分卡。检索顺序为硬条件、混合召回、重排、证据提取、确定性评分和质检。",
+        "operationId": "createMatchRun",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MatchRunCreateRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "匹配运行已进入队列",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MatchRunResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/match-runs/{matchRunId}": {
+      "get": {
+        "tags": ["Matching"],
+        "summary": "读取匹配运行状态和统计",
+        "operationId": "getMatchRun",
+        "parameters": [
+          { "$ref": "#/components/parameters/MatchRunId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "匹配运行",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MatchRunResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/match-runs/{matchRunId}/results": {
+      "get": {
+        "tags": ["Matching"],
+        "summary": "分页读取匹配结果和证据",
+        "operationId": "listMatchResults",
+        "parameters": [
+          { "$ref": "#/components/parameters/MatchRunId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "minimumScore", "in": "query", "schema": { "type": "number", "minimum": 0, "maximum": 100 } },
+          { "name": "reviewStatus", "in": "query", "schema": { "$ref": "#/components/schemas/MatchReviewStatus" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "匹配结果页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MatchResultPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/match-results/{matchResultId}": {
+      "get": {
+        "tags": ["Matching"],
+        "summary": "读取单个匹配结果、评分明细和证据",
+        "operationId": "getMatchResult",
+        "parameters": [
+          { "$ref": "#/components/parameters/MatchResultId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "匹配结果详情",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MatchResultResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/task-candidates": {
+      "get": {
+        "tags": ["Matching"],
+        "summary": "分页读取任务候选关系",
+        "operationId": "listTaskCandidates",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "selectionStatus", "in": "query", "schema": { "$ref": "#/components/schemas/CandidateSelectionStatus" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务候选关系页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCandidatePageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/candidate-list-previews": {
+      "post": {
+        "tags": ["CandidateLists", "HumanCheckpoints"],
+        "summary": "生成 G4 候选名单确认预览和输入哈希",
+        "description": "冻结匹配运行、候选集合、关键证据、待核实项、邀请渠道、模板、期限和外部影响，返回短期有效的服务端规范化 inputHash；不创建名单、不调用外部系统。",
+        "operationId": "createCandidateListPreview",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListPreviewRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "G4 待确认正文和 inputHash",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListPreviewResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests": {
+      "post": {
+        "tags": ["CandidateLists", "HumanCheckpoints"],
+        "summary": "提交 G4 候选名单人工确认",
+        "description": "使用未过期的预览和服务端 inputHash 创建 CONFIRM_CANDIDATE_LIST 门禁；预览内容变化后旧门禁必须失效。",
+        "operationId": "requestCandidateListReview",
+        "x-human-gate": "CONFIRM_CANDIDATE_LIST",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListReviewRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "G4 候选名单门禁已创建",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/confirm": {
+      "post": {
+        "tags": ["CandidateLists", "HumanCheckpoints"],
+        "summary": "冻结已通过 G4 门禁的候选人名单",
+        "description": "服务端校验 checkpointId 已批准、类型为 CONFIRM_CANDIDATE_LIST，且其 inputHash 与未过期 previewRef 完全一致，再冻结名单和发送授权并推进至在线面试阶段。",
+        "operationId": "confirmCandidateList",
+        "x-human-gate": "CONFIRM_CANDIDATE_LIST",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListConfirmRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "候选名单版本已确认",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/interview-batch-previews": {
+      "post": {
+        "tags": ["Interviews"],
+        "summary": "预览在线面试批次和逐人发送内容",
+        "description": "只执行名单、联系方式授权、模板变量和连接器能力校验，不创建邀请、不调用外部系统。",
+        "operationId": "createInterviewBatchPreview",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchPreviewRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "面试批次预览",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchPreviewResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/interview-batches": {
+      "post": {
+        "tags": ["Interviews"],
+        "summary": "根据有效预览创建在线面试草稿批次",
+        "description": "创建 DRAFT 批次但不发送邀请；服务端校验 previewHash、名单门禁、联系方式授权和连接器能力。",
+        "operationId": "createInterviewBatch",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchCreateRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "面试草稿批次已创建",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interview-batches/{batchId}": {
+      "get": {
+        "tags": ["Interviews"],
+        "summary": "读取在线面试批次",
+        "operationId": "getInterviewBatch",
+        "parameters": [
+          { "$ref": "#/components/parameters/BatchId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "在线面试批次",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interview-batches/{batchId}/send": {
+      "post": {
+        "tags": ["Interviews"],
+        "summary": "显式发送在线面试批次",
+        "description": "只有 DRAFT 批次可发送。服务端重新校验预览摘要、候选名单门禁、模板和联系方式授权后异步调用连接器。",
+        "operationId": "sendInterviewBatch",
+        "parameters": [
+          { "$ref": "#/components/parameters/BatchId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchSendRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "批次发送已进入异步队列",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewBatchResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interviews/{interviewId}": {
+      "get": {
+        "tags": ["Interviews"],
+        "summary": "读取候选人级面试状态",
+        "operationId": "getInterview",
+        "parameters": [
+          { "$ref": "#/components/parameters/InterviewId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "面试状态",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interviews/{interviewId}/reminders": {
+      "post": {
+        "tags": ["Interviews"],
+        "summary": "人工触发面试提醒",
+        "operationId": "remindInterview",
+        "parameters": [
+          { "$ref": "#/components/parameters/InterviewId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewReminderRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "提醒已接受",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interviews/{interviewId}/deadline": {
+      "patch": {
+        "tags": ["Interviews"],
+        "summary": "调整面试截止时间",
+        "operationId": "updateInterviewDeadline",
+        "parameters": [
+          { "$ref": "#/components/parameters/InterviewId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewDeadlinePatchRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "截止时间已更新",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interviews/{interviewId}/cancel": {
+      "post": {
+        "tags": ["Interviews"],
+        "summary": "取消面试邀请",
+        "description": "取消已发送邀请必须填写原因；外部状态未知时先查询下游再补偿。",
+        "operationId": "cancelInterview",
+        "parameters": [
+          { "$ref": "#/components/parameters/InterviewId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReasonRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "取消已接受",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/interviews/{interviewId}/result": {
+      "get": {
+        "tags": ["Interviews"],
+        "summary": "读取最新面试结果版本",
+        "operationId": "getInterviewResult",
+        "parameters": [
+          { "$ref": "#/components/parameters/InterviewId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "经来源和完整性校验的面试结果",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InterviewResultResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/evaluation-runs": {
+      "post": {
+        "tags": ["Evaluations"],
+        "summary": "发起候选人综合评价运行",
+        "description": "冻结评分卡、匹配结果和面试结果版本后异步生成评价。模型仅提取和归纳证据，分数由结构化规则计算。",
+        "operationId": "createEvaluationRun",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationRunCreateRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "评价运行已进入队列",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/evaluations": {
+      "get": {
+        "tags": ["Evaluations"],
+        "summary": "分页读取任务综合评价",
+        "operationId": "listEvaluations",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/EvaluationStatus" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "综合评价页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/evaluations/{evaluationId}": {
+      "get": {
+        "tags": ["Evaluations"],
+        "summary": "读取综合评价及全部证据",
+        "operationId": "getEvaluation",
+        "parameters": [
+          { "$ref": "#/components/parameters/EvaluationId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "综合评价",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/evaluations/{evaluationId}/revisions": {
+      "post": {
+        "tags": ["Evaluations"],
+        "summary": "基于人工修订创建新的评价版本",
+        "description": "不覆盖原评价。服务端记录修订字段、原因、操作者和原版本，并重新计算内容哈希。",
+        "operationId": "reviseEvaluation",
+        "parameters": [
+          { "$ref": "#/components/parameters/EvaluationId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationRevisionRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "新的人工修订评价版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/evaluations/{evaluationId}/confirm": {
+      "post": {
+        "tags": ["Evaluations"],
+        "summary": "人工确认候选人综合结论",
+        "description": "对应 G5。AI 建议与人工 decision 分离；修改已确认结论将创建新修订版本。",
+        "operationId": "confirmEvaluation",
+        "x-human-gate": "CONFIRM_EVALUATION",
+        "parameters": [
+          { "$ref": "#/components/parameters/EvaluationId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationConfirmRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "人工结论版本已确认",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EvaluationResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/human-checkpoints": {
+      "get": {
+        "tags": ["HumanCheckpoints"],
+        "summary": "分页查询人工门禁待办和历史",
+        "operationId": "listHumanCheckpoints",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "taskId", "in": "query", "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/HumanCheckpointStatus" } },
+          { "name": "type", "in": "query", "schema": { "$ref": "#/components/schemas/HumanCheckpointType" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "人工门禁页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/human-checkpoints/{checkpointId}": {
+      "get": {
+        "tags": ["HumanCheckpoints"],
+        "summary": "读取待确认内容和冻结版本",
+        "operationId": "getHumanCheckpoint",
+        "parameters": [
+          { "$ref": "#/components/parameters/CheckpointId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "人工门禁",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/human-checkpoints/{checkpointId}/decisions": {
+      "post": {
+        "tags": ["HumanCheckpoints"],
+        "summary": "提交不可变人工门禁决定",
+        "description": "决定人来自令牌。服务端校验角色、代理关系、资源版本和输入哈希；改变决定须取消旧门禁并创建新门禁。",
+        "operationId": "decideHumanCheckpoint",
+        "parameters": [
+          { "$ref": "#/components/parameters/CheckpointId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointDecisionRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "门禁决定已记录并执行相应领域命令",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-documents": {
+      "get": {
+        "tags": ["Knowledge"],
+        "summary": "分页查询有权访问的企业知识",
+        "operationId": "listKnowledgeDocuments",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "type", "in": "query", "schema": { "$ref": "#/components/schemas/KnowledgeType" } },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/KnowledgeStatus" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "企业知识页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeDocumentPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Knowledge"],
+        "summary": "创建知识资料条目",
+        "operationId": "createKnowledgeDocument",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeDocumentCreateRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "知识资料已创建",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeDocumentResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-documents/{documentId}": {
+      "get": {
+        "tags": ["Knowledge"],
+        "summary": "读取知识资料及版本摘要",
+        "operationId": "getKnowledgeDocument",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "知识资料",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeDocumentResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Knowledge"],
+        "summary": "修改知识资料元数据",
+        "description": "不修改已发布版本正文。停用、归档等状态命令须填写原因并受权限控制。",
+        "operationId": "updateKnowledgeDocument",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/KnowledgeDocumentPatchRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "知识元数据已更新",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeDocumentResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-documents/{documentId}/upload-sessions": {
+      "post": {
+        "tags": ["Knowledge"],
+        "summary": "创建知识文件直传会话",
+        "description": "返回短期、单文件、受大小和哈希约束的上传 URL。凭据仅能写入指定对象键，不能读取其他租户对象。",
+        "operationId": "createKnowledgeUploadSession",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeUploadSessionCreateRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "知识上传会话",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeUploadSessionResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-upload-sessions/{uploadSessionId}/complete": {
+      "post": {
+        "tags": ["Knowledge"],
+        "summary": "完成知识上传并创建不可变版本",
+        "description": "服务端验证对象大小、MIME、SHA-256 和恶意文件扫描后创建版本并异步解析、切分和索引。重复完成安全返回同一版本。",
+        "operationId": "completeKnowledgeUploadSession",
+        "parameters": [
+          { "$ref": "#/components/parameters/UploadSessionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeUploadCompleteRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "知识版本已创建并开始处理",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeVersionResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-documents/{documentId}/versions": {
+      "get": {
+        "tags": ["Knowledge"],
+        "summary": "分页读取知识资料的历史版本",
+        "operationId": "listKnowledgeVersions",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": {
+            "description": "知识版本页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeVersionPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Knowledge"],
+        "summary": "上传新的不可变知识版本",
+        "description": "服务端执行文件类型、大小、病毒和哈希校验后异步解析、切分和索引。未发布版本不得参与检索。",
+        "operationId": "createKnowledgeVersion",
+        "parameters": [
+          { "$ref": "#/components/parameters/DocumentId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/KnowledgeVersionUploadRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "知识版本已接收并开始解析",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeVersionResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-versions/{knowledgeVersionId}": {
+      "get": {
+        "tags": ["Knowledge"],
+        "summary": "读取指定知识历史版本",
+        "operationId": "getKnowledgeVersion",
+        "parameters": [
+          { "$ref": "#/components/parameters/KnowledgeVersionId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "知识历史版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeVersionResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-versions/{knowledgeVersionId}/review-requests": {
+      "post": {
+        "tags": ["Knowledge", "HumanCheckpoints"],
+        "summary": "提交知识版本发布审核",
+        "description": "只有解析和索引成功的版本可提交。创建发布门禁；批准后状态变为 PUBLISHED。",
+        "operationId": "requestKnowledgeVersionReview",
+        "x-human-gate": "PUBLISH_KNOWLEDGE",
+        "parameters": [
+          { "$ref": "#/components/parameters/KnowledgeVersionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanReviewRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "知识发布门禁已创建",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HumanCheckpointResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-versions/{knowledgeVersionId}/deactivate": {
+      "post": {
+        "tags": ["Knowledge"],
+        "summary": "停用已发布知识版本",
+        "description": "停用后立即从新检索中排除，但保留历史引用和审计可解析性。已有运行继续引用其冻结版本。",
+        "operationId": "deactivateKnowledgeVersion",
+        "parameters": [
+          { "$ref": "#/components/parameters/KnowledgeVersionId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReasonRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "知识版本已停用",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeVersionResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/knowledge-evidence/{evidenceId}": {
+      "get": {
+        "tags": ["Knowledge"],
+        "summary": "按权限解析知识证据引用",
+        "description": "返回不可变知识版本、定位信息和经权限检查的原文片段；无正文权限时仍返回哈希和定位。",
+        "operationId": "resolveKnowledgeEvidence",
+        "parameters": [
+          { "$ref": "#/components/parameters/EvidenceId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "知识证据引用解析结果",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/KnowledgeCitationResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/audit-events": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "分页查询不可变审计事件",
+        "description": "结果按权限脱敏。读取敏感资源、导出、模型调用、人工决定、权限拒绝和外部写入均应产生事件。",
+        "operationId": "listAuditEvents",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "taskId", "in": "query", "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "name": "resourceType", "in": "query", "schema": { "type": "string", "maxLength": 80 } },
+          { "name": "resourceId", "in": "query", "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "name": "actorId", "in": "query", "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "name": "action", "in": "query", "schema": { "type": "string", "maxLength": 120 } },
+          { "name": "occurredAfter", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "occurredBefore", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "审计事件页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuditEventPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/audit-events/{auditEventId}": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "读取单条不可变审计事件",
+        "operationId": "getAuditEvent",
+        "parameters": [
+          { "$ref": "#/components/parameters/AuditEventId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "经权限脱敏的审计事件详情",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuditEventResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/audit-traces/{traceId}": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "读取一次智能体运行的完整审计链路",
+        "description": "按时间顺序返回同一 traceId 下的运行、模型、人工门禁、连接器和领域事件，并验证事件哈希链。",
+        "operationId": "getAuditTrace",
+        "parameters": [
+          { "$ref": "#/components/parameters/TraceId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "审计运行链路",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuditTraceResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/connectors": {
+      "post": {
+        "tags": ["Connectors"],
+        "summary": "创建租户连接器配置",
+        "description": "密钥只写入密钥管理服务，响应和审计均不返回密钥正文。新连接器须通过健康检查后才能启用。",
+        "operationId": "createConnector",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorCreateRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "连接器配置已创建",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["Connectors"],
+        "summary": "查询租户连接器",
+        "operationId": "listConnectors",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "type", "in": "query", "schema": { "$ref": "#/components/schemas/ConnectorType" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "连接器页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorPageResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/connectors/{connectorId}": {
+      "get": {
+        "tags": ["Connectors"],
+        "summary": "读取连接器配置摘要",
+        "operationId": "getConnector",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "不含密钥正文的连接器配置",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Connectors"],
+        "summary": "更新连接器配置或轮换凭据",
+        "operationId": "updateConnector",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/ConnectorPatchRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "连接器配置已更新",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/connectors/{connectorId}/capabilities": {
+      "get": {
+        "tags": ["Connectors"],
+        "summary": "查询机器可读的连接器能力矩阵",
+        "description": "前端根据有效能力禁用不支持的动作。成功空结果不得代替 UNSUPPORTED_CAPABILITY。",
+        "operationId": "getConnectorCapabilities",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "连接器能力",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorCapabilitiesResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/connectors/{connectorId}/health-checks": {
+      "post": {
+        "tags": ["Connectors"],
+        "summary": "执行连接器连通性、权限和能力检查",
+        "operationId": "createConnectorHealthCheck",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorHealthCheckRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "连接器健康检查已接受",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorHealthCheckResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/connectors/{connectorId}/mappings": {
+      "get": {
+        "tags": ["Connectors"],
+        "summary": "读取连接器字段和枚举映射",
+        "operationId": "getConnectorMapping",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "连接器映射",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorMappingResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Connectors"],
+        "summary": "更新连接器字段和枚举映射",
+        "description": "映射变更创建新版本；已运行任务继续引用冻结映射版本。",
+        "operationId": "updateConnectorMapping",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/IfMatch" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/ConnectorMappingPatchRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "连接器映射新版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorMappingResponse" } } }
+          },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/connectors/{connectorId}/sync-jobs": {
+      "post": {
+        "tags": ["Connectors"],
+        "summary": "发起连接器增量或全量同步",
+        "operationId": "createConnectorSyncJob",
+        "parameters": [
+          { "$ref": "#/components/parameters/ConnectorId" },
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorSyncJobCreateRequest" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "同步任务已接受",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorSyncJobResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/sync-jobs/{syncJobId}": {
+      "get": {
+        "tags": ["Connectors"],
+        "summary": "读取连接器同步进度和错误摘要",
+        "operationId": "getConnectorSyncJob",
+        "parameters": [
+          { "$ref": "#/components/parameters/SyncJobId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "同步任务",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectorSyncJobResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "用户或 iframe 短期访问令牌；租户、用户、scope 和资源范围从已验证令牌解析。"
+      },
+      "ServiceOAuth": {
+        "type": "oauth2",
+        "description": "客户 ATS 后端的最小权限服务身份。",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "/oauth2/token",
+            "scopes": { "embed:session:create": "创建用户委托的嵌入会话" }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "RequestId": { "name": "X-Request-Id", "in": "header", "required": false, "description": "调用方生成的追踪 ID；缺失时服务端生成。", "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "CorrelationId": { "name": "X-Correlation-Id", "in": "header", "required": false, "description": "招聘任务、运行或宿主会话关联 ID。", "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "description": "写请求必填。相同键和相同请求摘要返回首次结果；相同键但载荷不同返回 IDEMPOTENCY_CONFLICT。", "schema": { "type": "string", "format": "uuid" } },
+      "IfMatch": { "name": "If-Match", "in": "header", "required": true, "description": "资源版本 ETag，例如 W/\"7\"。缺失返回 428，版本冲突返回 409。", "schema": { "type": "string", "pattern": "^(W/)?\\\"[1-9][0-9]*\\\"$" } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "服务端返回的不透明游标。", "schema": { "type": "string", "maxLength": 512 } },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+      "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "DraftId": { "name": "draftId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "PlanVersionId": { "name": "planVersionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "AgentRunId": { "name": "agentRunId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "MatchRunId": { "name": "matchRunId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "MatchResultId": { "name": "matchResultId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "BatchId": { "name": "batchId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "InterviewId": { "name": "interviewId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "EvaluationId": { "name": "evaluationId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "CheckpointId": { "name": "checkpointId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "DocumentId": { "name": "documentId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "KnowledgeVersionId": { "name": "knowledgeVersionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "UploadSessionId": { "name": "uploadSessionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "EvidenceId": { "name": "evidenceId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "AuditEventId": { "name": "auditEventId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "TraceId": { "name": "traceId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
+      "ConnectorId": { "name": "connectorId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "SyncJobId": { "name": "syncJobId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }
+    },
+    "headers": {
+      "ETag": { "description": "当前资源版本，格式 W/\"{version}\"。", "schema": { "type": "string" } },
+      "IdempotencyReplayed": { "description": "true 表示返回了同一幂等请求的首次结果。", "schema": { "type": "boolean" } }
+    },
+    "responses": {
+      "Error": {
+        "description": "统一错误响应",
+        "headers": { "Retry-After": { "description": "可重试错误建议等待秒数。", "schema": { "type": "integer", "minimum": 0 } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "BadRequest": {
+        "description": "请求格式、字段约束、游标或业务输入校验失败",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "Unauthorized": {
+        "description": "访问令牌、服务身份或一次性引导令牌无效",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "Forbidden": {
+        "description": "调用方已认证但缺少 scope、数据范围、资源权限或允许的宿主 Origin",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "NotFound": {
+        "description": "资源不存在、不可见或外部引用无法映射",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "VersionConflict": {
+        "description": "版本或幂等冲突",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "Gone": {
+        "description": "一次性令牌、嵌入会话、上下文解析结果或需求草案已过期且不可恢复",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "PreconditionRequired": {
+        "description": "修改版本化资源时缺少 If-Match",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "RateLimited": {
+        "description": "调用频率或租户配额已超限",
+        "headers": { "Retry-After": { "description": "建议等待秒数。", "schema": { "type": "integer", "minimum": 0 } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "InternalServerError": {
+        "description": "平台内部错误；响应和日志不得泄露令牌、个人信息或内部堆栈",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "ServiceUnavailable": {
+        "description": "平台依赖或上游服务暂时不可用",
+        "headers": { "Retry-After": { "description": "建议等待秒数。", "schema": { "type": "integer", "minimum": 0 } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "GatewayTimeout": {
+        "description": "平台等待身份、映射、连接器或 AI 上游响应超时",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      }
+    },
+    "schemas": {
+      "Uuid": { "type": "string", "format": "uuid" },
+      "HttpsOrigin": { "type": "string", "format": "uri", "pattern": "^https://(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(?::[0-9]{1,5})?$", "maxLength": 300, "description": "浏览器 Origin，仅包含 scheme、host 和可选 port，不包含用户信息、路径、查询或片段。" },
+      "Version": { "type": "integer", "minimum": 1 },
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["requestId", "data", "meta"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/Uuid" },
+          "data": {},
+          "meta": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/ResponseMeta" },
+              { "$ref": "#/components/schemas/PageMeta" }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResponseMeta": {
+        "type": "object",
+        "required": ["servedAt"],
+        "properties": {
+          "servedAt": { "type": "string", "format": "date-time" },
+          "traceId": { "type": "string", "maxLength": 64 }
+        },
+        "additionalProperties": false
+      },
+      "PageMeta": {
+        "type": "object",
+        "required": ["servedAt", "limit", "hasMore"],
+        "properties": {
+          "servedAt": { "type": "string", "format": "date-time" },
+          "traceId": { "type": "string", "maxLength": 64 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+          "hasMore": { "type": "boolean" },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 512 }
+        },
+        "additionalProperties": false
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["requestId", "error"],
+        "properties": {
+          "requestId": { "$ref": "#/components/schemas/Uuid" },
+          "error": { "$ref": "#/components/schemas/ApiError" }
+        },
+        "additionalProperties": false
+      },
+      "ApiError": {
+        "type": "object",
+        "required": ["code", "message", "retryable", "traceId"],
+        "properties": {
+          "code": { "$ref": "#/components/schemas/ErrorCode" },
+          "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "retryable": { "type": "boolean" },
+          "retryAfterSeconds": { "type": ["integer", "null"], "minimum": 0 },
+          "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "details": { "type": "array", "items": { "$ref": "#/components/schemas/ErrorDetail" }, "maxItems": 100 }
+        },
+        "additionalProperties": false
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string", "maxLength": 80 },
+          "field": { "type": ["string", "null"], "maxLength": 200 },
+          "message": { "type": ["string", "null"], "maxLength": 500 },
+          "resourceRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] }
+        },
+        "additionalProperties": false
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": ["VALIDATION_FAILED", "AUTH_FAILED", "PERMISSION_DENIED", "RESOURCE_NOT_FOUND", "STATE_NOT_ALLOWED", "VERSION_CONFLICT", "PRECONDITION_REQUIRED", "IDEMPOTENCY_CONFLICT", "HUMAN_GATE_REQUIRED", "RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TIMEOUT", "MAPPING_FAILED", "UNSUPPORTED_CAPABILITY", "CONTEXT_EXPIRED", "CONTEXT_FORBIDDEN", "EMBED_ORIGIN_DENIED", "TOKEN_REPLAYED", "SCHEMA_VERSION_UNSUPPORTED", "INTERNAL_ERROR"]
+      },
+      "ExternalRef": {
+        "type": "object",
+        "required": ["system", "id"],
+        "properties": {
+          "system": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "objectType": { "type": ["string", "null"], "maxLength": 80 },
+          "version": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "string", "maxLength": 128 }, { "type": "null" }] }
+        },
+        "additionalProperties": false
+      },
+      "ResourceRef": {
+        "type": "object",
+        "required": ["type", "id", "version"],
+        "properties": {
+          "type": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{1,79}$" },
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "version": { "$ref": "#/components/schemas/Version" }
+        },
+        "additionalProperties": false
+      },
+      "UserRef": {
+        "type": "object",
+        "required": ["id", "displayName"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 }
+        },
+        "additionalProperties": false
+      },
+      "EvidenceSourceLocator": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer", "minimum": 1 },
+          "section": { "type": "string", "maxLength": 200 },
+          "paragraph": { "type": "integer", "minimum": 0 },
+          "startOffset": { "type": "integer", "minimum": 0 },
+          "endOffset": { "type": "integer", "minimum": 0 },
+          "timeStartMs": { "type": "integer", "minimum": 0 },
+          "timeEndMs": { "type": "integer", "minimum": 0 }
+        },
+        "anyOf": [
+          { "required": ["page"] },
+          { "required": ["section"] },
+          { "required": ["startOffset", "endOffset"] },
+          { "required": ["timeStartMs", "timeEndMs"] }
+        ],
+        "additionalProperties": false
+      },
+      "EvidenceRef": {
+        "type": "object",
+        "required": ["id", "sourceType", "sourceVersionRef", "sourceLocator", "quoteHash", "extractionConfidence"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "sourceType": { "type": "string", "enum": ["RESUME", "INTERVIEW_TRANSCRIPT", "ASSESSMENT", "KNOWLEDGE", "HUMAN_NOTE"] },
+          "sourceVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "sourceLocator": { "$ref": "#/components/schemas/EvidenceSourceLocator" },
+          "quote": { "type": ["string", "null"], "maxLength": 2000, "description": "仅在调用者具有源正文权限时返回。" },
+          "quoteHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "extractionConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "modelInvocationId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "verifiedBy": { "oneOf": [{ "$ref": "#/components/schemas/UserRef" }, { "type": "null" }] },
+          "verifiedAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "HostCapability": {
+        "type": "string",
+        "enum": ["CONTEXT_PUSH", "HOST_NAVIGATION", "AUTH_REFRESH", "AUTO_RESIZE", "DOWNLOAD_DELEGATE", "OPEN_STANDALONE", "THEME_TOKENS"]
+      },
+      "CapabilityNegotiation": {
+        "type": "object",
+        "required": ["required", "supported", "effective", "missing", "knownLimitations"],
+        "properties": {
+          "required": { "type": "array", "items": { "$ref": "#/components/schemas/HostCapability" }, "uniqueItems": true },
+          "supported": { "type": "array", "items": { "$ref": "#/components/schemas/HostCapability" }, "uniqueItems": true },
+          "effective": { "type": "array", "items": { "$ref": "#/components/schemas/HostCapability" }, "uniqueItems": true },
+          "missing": { "type": "array", "items": { "$ref": "#/components/schemas/HostCapability" }, "uniqueItems": true },
+          "knownLimitations": { "type": "array", "items": { "type": "string", "maxLength": 300 }, "maxItems": 50 }
+        },
+        "additionalProperties": false
+      },
+      "ThemeTokens": {
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "enum": ["light", "dark", "system"] },
+          "primaryColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+          "surfaceColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+          "textColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+          "borderColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+          "density": { "type": "string", "enum": ["compact", "comfortable"] },
+          "radius": { "type": "string", "enum": ["none", "small", "medium"] },
+          "fontFamily": { "type": "string", "enum": ["system", "sans-serif"] }
+        },
+        "additionalProperties": false
+      },
+      "HostContext": {
+        "type": "object",
+        "required": ["scene", "jobRef", "contextVersion", "nonce", "expiresAt"],
+        "properties": {
+          "scene": { "type": "string", "enum": ["job", "candidate", "task"] },
+          "enterpriseRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "jobRef": { "$ref": "#/components/schemas/ExternalRef" },
+          "taskRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "candidateRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "applicationRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "hostRoute": { "type": ["string", "null"], "maxLength": 300 },
+          "returnIntent": { "type": ["string", "null"], "maxLength": 100 },
+          "contextVersion": { "type": "integer", "minimum": 1 },
+          "nonce": { "type": "string", "minLength": 16, "maxLength": 128 },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "locale": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$", "default": "zh-CN" },
+          "timeZone": { "type": "string", "minLength": 1, "maxLength": 80 }
+        },
+        "additionalProperties": false
+      },
+      "EmbedSessionCreateRequest": {
+        "type": "object",
+        "required": ["embedClientId", "userAssertion", "hostOrigin", "protocolVersion", "hostContext", "hostCapabilities"],
+        "properties": {
+          "embedClientId": { "type": "string", "pattern": "^[a-zA-Z0-9._-]{3,80}$" },
+          "userAssertion": { "type": "string", "minLength": 32, "maxLength": 16384, "writeOnly": true },
+          "hostOrigin": { "$ref": "#/components/schemas/HttpsOrigin" },
+          "protocolVersion": { "type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]+$" },
+          "hostContext": { "$ref": "#/components/schemas/HostContext" },
+          "hostCapabilities": { "type": "array", "items": { "$ref": "#/components/schemas/HostCapability" }, "uniqueItems": true },
+          "requiredCapabilities": { "type": "array", "items": { "$ref": "#/components/schemas/HostCapability" }, "uniqueItems": true },
+          "initialRoute": { "type": "string", "pattern": "^[a-z][a-z0-9/-]{0,119}$" },
+          "theme": { "$ref": "#/components/schemas/ThemeTokens" }
+        },
+        "additionalProperties": false
+      },
+      "EmbedSessionGrant": {
+        "type": "object",
+        "required": ["sessionId", "embedUrl", "bootstrapToken", "tokenType", "expiresAt", "protocolVersion", "capabilities"],
+        "properties": {
+          "sessionId": { "$ref": "#/components/schemas/Uuid" },
+          "embedUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "bootstrapToken": { "type": "string", "minLength": 32, "writeOnly": true },
+          "tokenType": { "type": "string", "const": "Bootstrap" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "protocolVersion": { "type": "string" },
+          "capabilities": { "$ref": "#/components/schemas/CapabilityNegotiation" }
+        },
+        "additionalProperties": false
+      },
+      "EmbedTokenExchangeRequest": {
+        "type": "object",
+        "required": ["sessionId", "bootstrapToken", "nonce", "protocolVersion", "observedParentOrigin"],
+        "properties": {
+          "sessionId": { "$ref": "#/components/schemas/Uuid" },
+          "bootstrapToken": { "type": "string", "minLength": 32, "writeOnly": true },
+          "nonce": { "type": "string", "minLength": 16, "maxLength": 128 },
+          "protocolVersion": { "type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]+$" },
+          "observedParentOrigin": { "$ref": "#/components/schemas/HttpsOrigin" }
+        },
+        "additionalProperties": false
+      },
+      "EmbedAccessGrant": {
+        "type": "object",
+        "required": ["accessToken", "tokenType", "expiresAt", "scopes", "sessionId", "capabilities", "context"],
+        "properties": {
+          "accessToken": { "type": "string", "minLength": 32, "writeOnly": true },
+          "tokenType": { "type": "string", "const": "Bearer" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "scopes": { "type": "array", "items": { "type": "string", "maxLength": 100 }, "uniqueItems": true },
+          "sessionId": { "$ref": "#/components/schemas/Uuid" },
+          "capabilities": { "$ref": "#/components/schemas/CapabilityNegotiation" },
+          "context": { "$ref": "#/components/schemas/HostContextResolution" }
+        },
+        "additionalProperties": false
+      },
+      "HostContextResolution": {
+        "type": "object",
+        "required": ["resolutionId", "scene", "jobRef", "contextVersion", "nonce", "expiresAt", "locale", "timeZone", "observedParentOrigin", "contextHash", "resolvedRefs", "resolvedAt"],
+        "properties": {
+          "resolutionId": { "$ref": "#/components/schemas/Uuid" },
+          "scene": { "type": "string", "enum": ["job", "candidate", "task"] },
+          "enterpriseRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "jobRef": { "$ref": "#/components/schemas/ExternalRef" },
+          "taskRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "candidateRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "applicationRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "hostRoute": { "type": ["string", "null"], "maxLength": 300 },
+          "returnIntent": { "type": ["string", "null"], "maxLength": 100 },
+          "contextVersion": { "type": "integer", "minimum": 1 },
+          "nonce": { "type": "string", "minLength": 16, "maxLength": 128 },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "locale": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+          "timeZone": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "observedParentOrigin": { "$ref": "#/components/schemas/HttpsOrigin" },
+          "contextHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "resolvedRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "uniqueItems": true },
+          "resolvedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "EmbedContextResolveRequest": {
+        "type": "object",
+        "required": ["hostContext", "observedParentOrigin"],
+        "properties": {
+          "hostContext": { "$ref": "#/components/schemas/HostContext" },
+          "observedParentOrigin": { "$ref": "#/components/schemas/HttpsOrigin" }
+        },
+        "additionalProperties": false
+      },
+      "EmbedContextReplaceRequest": {
+        "type": "object",
+        "required": ["resolutionId", "contextHash", "expectedContextVersion", "observedParentOrigin"],
+        "properties": {
+          "resolutionId": { "$ref": "#/components/schemas/Uuid" },
+          "contextHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "expectedContextVersion": { "type": "integer", "minimum": 1 },
+          "observedParentOrigin": { "$ref": "#/components/schemas/HttpsOrigin" }
+        },
+        "additionalProperties": false
+      },
+      "DeepLinkCreateRequest": {
+        "type": "object",
+        "required": ["route", "returnIntent"],
+        "properties": {
+          "route": { "type": "string", "pattern": "^[a-z][a-z0-9/-]{0,119}$" },
+          "resourceRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "returnIntent": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "additionalProperties": false
+      },
+      "DeepLinkGrant": {
+        "type": "object",
+        "required": ["url", "expiresAt", "singleUse"],
+        "properties": {
+          "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "singleUse": { "type": "boolean", "const": true }
+        },
+        "additionalProperties": false
+      },
+      "RequirementDraftStatus": { "type": "string", "enum": ["DRAFT", "READY", "CONVERTED", "ABANDONED", "EXPIRED"] },
+      "RequirementField": {
+        "type": "object",
+        "required": ["value", "confidence", "source", "needsConfirmation"],
+        "properties": {
+          "value": {},
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "source": { "type": "string", "enum": ["USER", "DEFAULT", "AI", "IMPORTED"] },
+          "needsConfirmation": { "type": "boolean" },
+          "evidence": { "type": ["string", "null"], "maxLength": 1000 }
+        },
+        "additionalProperties": false
+      },
+      "RequirementFields": {
+        "type": "object",
+        "properties": {
+          "positionName": { "$ref": "#/components/schemas/RequirementField" },
+          "organizationRef": { "$ref": "#/components/schemas/RequirementField" },
+          "locations": { "$ref": "#/components/schemas/RequirementField" },
+          "headcount": { "$ref": "#/components/schemas/RequirementField" },
+          "recruitmentType": { "$ref": "#/components/schemas/RequirementField" },
+          "priority": { "$ref": "#/components/schemas/RequirementField" },
+          "targetDate": { "$ref": "#/components/schemas/RequirementField" },
+          "coreRequirements": { "$ref": "#/components/schemas/RequirementField" },
+          "knowledgeScope": { "$ref": "#/components/schemas/RequirementField" }
+        },
+        "additionalProperties": false
+      },
+      "RequirementDraft": {
+        "type": "object",
+        "required": ["id", "status", "version", "rawInput", "fields", "createdBy", "createdAt", "updatedAt", "expiresAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "status": { "$ref": "#/components/schemas/RequirementDraftStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "rawInput": { "type": "string", "minLength": 1, "maxLength": 10000, "description": "按权限返回并在服务端加密存储。" },
+          "fields": { "$ref": "#/components/schemas/RequirementFields" },
+          "sourceJobRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "hostContextHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "createdBy": { "$ref": "#/components/schemas/UserRef" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "convertedTaskRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] }
+        },
+        "additionalProperties": false
+      },
+      "RequirementDraftCreateRequest": {
+        "type": "object",
+        "required": ["input"],
+        "properties": {
+          "input": { "type": "string", "minLength": 10, "maxLength": 10000 },
+          "sourceJobRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "hostContextHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "locale": { "type": "string", "default": "zh-CN" }
+        },
+        "additionalProperties": false
+      },
+      "RequirementDraftPatchRequest": {
+        "type": "object",
+        "properties": {
+          "rawInput": { "type": "string", "minLength": 10, "maxLength": 10000 },
+          "fields": { "$ref": "#/components/schemas/RequirementFields" }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      },
+      "RequirementDraftConvertRequest": {
+        "type": "object",
+        "required": ["confirmation", "ownerUserId"],
+        "properties": {
+          "confirmation": { "$ref": "#/components/schemas/HumanConfirmation" },
+          "ownerUserId": { "$ref": "#/components/schemas/Uuid" },
+          "hiringManagerUserId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "participantUserIds": { "type": "array", "items": { "$ref": "#/components/schemas/Uuid" }, "uniqueItems": true, "maxItems": 100 }
+        },
+        "additionalProperties": false
+      },
+      "HumanConfirmation": {
+        "type": "object",
+        "required": ["confirmed", "inputHash"],
+        "properties": {
+          "confirmed": { "type": "boolean", "const": true },
+          "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "comment": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "RequirementDraftResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/RequirementDraft" } } }
+        ]
+      },
+      "BusinessStage": { "type": "string", "enum": ["ROLE_PLAN", "TALENT_SEARCH", "CANDIDATE_CONFIRMATION", "ONLINE_INTERVIEW", "COMPREHENSIVE_EVALUATION", "COMPLETED"] },
+      "LifecycleStatus": { "type": "string", "enum": ["ACTIVE", "PAUSED", "CANCELLED", "ARCHIVED"] },
+      "ExecutionStatus": { "type": "string", "enum": ["IDLE", "QUEUED", "RUNNING", "WAITING_HUMAN", "SUCCEEDED", "FAILED_RETRYABLE", "FAILED_FINAL", "CANCEL_REQUESTED", "CANCELLED"] },
+      "RecruitmentTask": {
+        "type": "object",
+        "required": ["id", "taskNo", "title", "positionName", "organizationRef", "owner", "recruitmentType", "headcount", "locations", "priority", "businessStage", "lifecycleStatus", "executionStatus", "version", "creationCheckpointRef", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskNo": { "type": "string", "pattern": "^[A-Z0-9-]{6,40}$" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "positionName": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "organizationRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "owner": { "$ref": "#/components/schemas/UserRef" },
+          "hiringManager": { "oneOf": [{ "$ref": "#/components/schemas/UserRef" }, { "type": "null" }] },
+          "participants": { "type": "array", "items": { "$ref": "#/components/schemas/UserRef" }, "maxItems": 100 },
+          "recruitmentType": { "type": "string", "enum": ["SOCIAL", "CAMPUS", "INTERNAL"] },
+          "headcount": { "type": "integer", "minimum": 1, "maximum": 10000 },
+          "locations": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 100 }, "minItems": 1, "uniqueItems": true },
+          "priority": { "type": "string", "enum": ["LOW", "NORMAL", "HIGH", "URGENT"] },
+          "targetDate": { "type": ["string", "null"], "format": "date" },
+          "businessStage": { "$ref": "#/components/schemas/BusinessStage" },
+          "lifecycleStatus": { "$ref": "#/components/schemas/LifecycleStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ExecutionStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "creationCheckpointRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "currentPlanVersionRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "sourceJobRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "RecruitmentTaskPatchRequest": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "ownerUserId": { "$ref": "#/components/schemas/Uuid" },
+          "hiringManagerUserId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "participantUserIds": { "type": "array", "items": { "$ref": "#/components/schemas/Uuid" }, "uniqueItems": true, "maxItems": 100 },
+          "priority": { "type": "string", "enum": ["LOW", "NORMAL", "HIGH", "URGENT"] },
+          "targetDate": { "type": ["string", "null"], "format": "date" }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      },
+      "RecruitmentTaskCommandRequest": {
+        "type": "object",
+        "required": ["command", "reason"],
+        "properties": {
+          "command": { "type": "string", "enum": ["PAUSE", "RESUME", "CANCEL", "ARCHIVE", "RESTORE", "REOPEN"] },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "RecruitmentTaskResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/RecruitmentTask" } } }
+        ]
+      },
+      "RecruitmentTaskPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/RecruitmentTask" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "PositionPlanStatus": { "type": "string", "enum": ["DRAFT", "IN_REVIEW", "APPROVED", "SUPERSEDED"] },
+      "GeneratedBy": { "type": "string", "enum": ["AI", "HUMAN", "IMPORTED"] },
+      "HardConstraint": {
+        "type": "object",
+        "required": ["code", "name", "field", "operator", "value", "reason"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "field": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "operator": { "type": "string", "enum": ["EQ", "IN", "GTE", "LTE", "EXISTS"] },
+          "value": {},
+          "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "sourceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "uniqueItems": true }
+        },
+        "additionalProperties": false
+      },
+      "ScoreCriterion": {
+        "type": "object",
+        "required": ["code", "name", "weight", "description", "evidenceRequirement", "scoringRule", "required", "displayOrder"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "evidenceRequirement": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "scoringRule": { "$ref": "#/components/schemas/ScoringRule" },
+          "required": { "type": "boolean" },
+          "capScore": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "displayOrder": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "ScoringRule": {
+        "type": "object",
+        "required": ["type", "parameters"],
+        "properties": {
+          "type": { "type": "string", "enum": ["RANGE_TABLE", "BOOLEAN", "PRESENCE", "CATEGORY_MAP"] },
+          "parameters": { "type": "object", "description": "仅允许服务端已注册规则类型的结构化参数；不得包含可执行代码。" },
+          "calculationVersion": { "type": "string", "minLength": 1, "maxLength": 80 }
+        },
+        "additionalProperties": false
+      },
+      "RecommendationThreshold": {
+        "type": "object",
+        "required": ["level", "minimum", "maximum"],
+        "properties": {
+          "level": { "type": "string", "enum": ["NOT_RECOMMENDED", "REVIEW", "RECOMMENDED", "STRONGLY_RECOMMENDED"] },
+          "minimum": { "type": "number", "minimum": 0, "maximum": 100 },
+          "maximum": { "type": "number", "minimum": 0, "maximum": 100 }
+        },
+        "additionalProperties": false
+      },
+      "ScorecardVersion": {
+        "type": "object",
+        "required": ["id", "versionNo", "totalScore", "criteria", "thresholds", "missingEvidencePolicy", "sensitiveFeaturePolicy", "contentHash"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "totalScore": { "type": "number", "const": 100 },
+          "criteria": { "type": "array", "items": { "$ref": "#/components/schemas/ScoreCriterion" }, "minItems": 1, "maxItems": 50 },
+          "thresholds": { "type": "array", "items": { "$ref": "#/components/schemas/RecommendationThreshold" }, "minItems": 1, "maxItems": 10 },
+          "missingEvidencePolicy": { "type": "string", "enum": ["ZERO_AND_FLAG", "NO_SCORE_AND_REVIEW", "REQUIRE_HUMAN"] },
+          "sensitiveFeaturePolicy": { "type": "string", "const": "EXCLUDE_FROM_SCORING" },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false,
+        "description": "服务端额外校验 criteria 权重合计为 100，阈值连续且不重叠。"
+      },
+      "PositionPlanVersion": {
+        "type": "object",
+        "required": ["id", "taskId", "versionNo", "status", "version", "jobDescription", "responsibilities", "requirements", "hardConstraints", "scorecard", "generatedBy", "knowledgeVersionRefs", "contentHash", "approvalCheckpointRef", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/PositionPlanStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "jobDescription": { "type": "string", "minLength": 1, "maxLength": 20000 },
+          "responsibilities": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1000 }, "minItems": 1, "maxItems": 100 },
+          "requirements": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1000 }, "minItems": 1, "maxItems": 100 },
+          "hardConstraints": { "type": "array", "items": { "$ref": "#/components/schemas/HardConstraint" }, "maxItems": 50 },
+          "scorecard": { "$ref": "#/components/schemas/ScorecardVersion" },
+          "generatedBy": { "$ref": "#/components/schemas/GeneratedBy" },
+          "basedOnRunId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "knowledgeVersionRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "uniqueItems": true },
+          "promptVersion": { "type": ["string", "null"], "maxLength": 100 },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "changeSummary": { "type": ["string", "null"], "maxLength": 2000 },
+          "approvalCheckpointRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "approvedBy": { "oneOf": [{ "$ref": "#/components/schemas/UserRef" }, { "type": "null" }] },
+          "approvedAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "PositionPlanGenerateRequest": {
+        "type": "object",
+        "required": ["requirementDraftRef", "knowledgeVersionRefs"],
+        "properties": {
+          "requirementDraftRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "knowledgeVersionRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "uniqueItems": true, "maxItems": 100 },
+          "instructions": { "type": ["string", "null"], "maxLength": 4000 }
+        },
+        "additionalProperties": false
+      },
+      "PositionPlanPatchRequest": {
+        "type": "object",
+        "properties": {
+          "jobDescription": { "type": "string", "minLength": 1, "maxLength": 20000 },
+          "responsibilities": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1000 }, "minItems": 1, "maxItems": 100 },
+          "requirements": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1000 }, "minItems": 1, "maxItems": 100 },
+          "hardConstraints": { "type": "array", "items": { "$ref": "#/components/schemas/HardConstraint" }, "maxItems": 50 },
+          "scorecard": { "$ref": "#/components/schemas/ScorecardVersion" },
+          "changeSummary": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      },
+      "PositionPlanResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/PositionPlanVersion" } } }
+        ]
+      },
+      "JobPublicationReviewRequest": {
+        "type": "object",
+        "required": ["connectorId", "requiredRole"],
+        "properties": {
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "externalJobRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "expectedExternalVersion": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "string", "maxLength": 128 }, { "type": "null" }] },
+          "publishAt": { "type": ["string", "null"], "format": "date-time" },
+          "approvalRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "requiredRole": { "type": "string", "const": "CUSTOMER_APPROVER" },
+          "assigneeUserId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "comment": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "PositionPlanPublishRequest": {
+        "type": "object",
+        "required": ["checkpointId", "connectorId"],
+        "properties": {
+          "checkpointId": { "$ref": "#/components/schemas/Uuid" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "externalJobRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "expectedExternalVersion": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "string", "maxLength": 128 }, { "type": "null" }] },
+          "publishAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "JobPublicationStatus": {
+        "type": "string",
+        "enum": ["QUEUED", "PUBLISHING", "PUBLISHED", "FAILED_RETRYABLE", "FAILED_FINAL", "CANCELLED"]
+      },
+      "JobPublication": {
+        "type": "object",
+        "required": ["id", "taskId", "positionPlanVersionRef", "checkpointRef", "connectorId", "status", "version", "agentRunRef", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "positionPlanVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "checkpointRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "status": { "$ref": "#/components/schemas/JobPublicationStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "agentRunRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "externalJobRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "publishedAt": { "type": ["string", "null"], "format": "date-time" },
+          "failureCode": { "type": ["string", "null"], "maxLength": 100 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "JobPublicationResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/JobPublication" } } }
+        ]
+      },
+      "AgentRunStatus": { "type": "string", "enum": ["QUEUED", "RUNNING", "WAITING_HUMAN", "SUCCEEDED", "FAILED_RETRYABLE", "FAILED_FINAL", "CANCEL_REQUESTED", "CANCELLED"] },
+      "AgentRun": {
+        "type": "object",
+        "required": ["id", "taskId", "runType", "status", "workflowVersion", "traceId", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "runType": { "type": "string", "enum": ["REQUIREMENT_EXTRACTION", "POSITION_PLAN_GENERATION", "JOB_PUBLICATION", "MATCHING", "INTERVIEW_RESULT_PROCESSING", "EVALUATION_GENERATION"] },
+          "status": { "$ref": "#/components/schemas/AgentRunStatus" },
+          "workflowVersion": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "failureCode": { "type": ["string", "null"], "maxLength": 100 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "AgentRunResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/AgentRun" } } }
+        ]
+      },
+      "CandidateSelectionStatus": { "type": "string", "enum": ["UNREVIEWED", "SHORTLISTED", "CONFIRMED", "EXCLUDED"] },
+      "TaskCandidateStatus": { "type": "string", "enum": ["DISCOVERED", "UNDER_REVIEW", "SELECTED", "INTERVIEWING", "EVALUATED", "CLOSED"] },
+      "CandidateSummary": {
+        "type": "object",
+        "required": ["id", "candidateNo", "displayName", "consentStatus"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "candidateNo": { "type": "string", "minLength": 1, "maxLength": 60 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120, "description": "按权限返回全名或掩码。" },
+          "consentStatus": { "type": "string", "enum": ["UNKNOWN", "GRANTED", "REVOKED", "EXPIRED"] },
+          "sourceRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] }
+        },
+        "additionalProperties": false
+      },
+      "TaskCandidate": {
+        "type": "object",
+        "required": ["id", "taskId", "candidate", "status", "selectionStatus", "version", "sourceType", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "candidate": { "$ref": "#/components/schemas/CandidateSummary" },
+          "status": { "$ref": "#/components/schemas/TaskCandidateStatus" },
+          "selectionStatus": { "$ref": "#/components/schemas/CandidateSelectionStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "currentMatchResultRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "candidateListVersionRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "sourceType": { "type": "string", "enum": ["ATS_APPLICATION", "TALENT_POOL", "MANUAL_IMPORT"] },
+          "sourceApplicationRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateScope": {
+        "type": "object",
+        "required": ["connectorIds", "filters", "dataCutoffAt"],
+        "properties": {
+          "connectorIds": { "type": "array", "items": { "$ref": "#/components/schemas/Uuid" }, "minItems": 1, "uniqueItems": true },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "keywords": { "type": "array", "items": { "type": "string", "maxLength": 100 }, "maxItems": 50 },
+              "locations": { "type": "array", "items": { "type": "string", "maxLength": 100 }, "maxItems": 50 },
+              "minimumExperienceYears": { "type": "number", "minimum": 0, "maximum": 80 },
+              "educationLevels": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "maxItems": 20 },
+              "updatedAfter": { "type": ["string", "null"], "format": "date-time" }
+            },
+            "additionalProperties": false
+          },
+          "dataCutoffAt": { "type": "string", "format": "date-time" },
+          "maximumCandidates": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 10000 }
+        },
+        "additionalProperties": false
+      },
+      "MatchRunStatus": { "type": "string", "enum": ["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"] },
+      "MatchRun": {
+        "type": "object",
+        "required": ["id", "taskId", "positionPlanVersionRef", "scorecardVersionRef", "candidateScope", "searchIndexVersion", "pipelineVersion", "status", "version", "metrics", "requestedBy", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "positionPlanVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "candidateScope": { "$ref": "#/components/schemas/CandidateScope" },
+          "searchIndexVersion": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "pipelineVersion": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "status": { "$ref": "#/components/schemas/MatchRunStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "metrics": { "$ref": "#/components/schemas/MatchRunMetrics" },
+          "requestedBy": { "$ref": "#/components/schemas/UserRef" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+          "failureCode": { "type": ["string", "null"], "maxLength": 100 }
+        },
+        "additionalProperties": false
+      },
+      "MatchRunMetrics": {
+        "type": "object",
+        "required": ["scanned", "hardFiltered", "recalled", "reranked", "scored", "failed"],
+        "properties": {
+          "scanned": { "type": "integer", "minimum": 0 },
+          "hardFiltered": { "type": "integer", "minimum": 0 },
+          "recalled": { "type": "integer", "minimum": 0 },
+          "reranked": { "type": "integer", "minimum": 0 },
+          "scored": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "integer", "minimum": 0 },
+          "durationMs": { "type": ["integer", "null"], "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "MatchRunCreateRequest": {
+        "type": "object",
+        "required": ["positionPlanVersionRef", "scorecardVersionRef", "candidateScope"],
+        "properties": {
+          "positionPlanVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "candidateScope": { "$ref": "#/components/schemas/CandidateScope" },
+          "minimumRecommendationScore": { "type": "number", "minimum": 0, "maximum": 100 }
+        },
+        "additionalProperties": false
+      },
+      "MatchReviewStatus": { "type": "string", "enum": ["UNREVIEWED", "REVIEWED", "NEEDS_VERIFICATION"] },
+      "EvidenceStatus": { "type": "string", "enum": ["SUPPORTED", "INSUFFICIENT", "CONFLICTING", "HUMAN_PROVIDED"] },
+      "CriterionScore": {
+        "type": "object",
+        "required": ["criterionCode", "rawScore", "weightedScore", "calculationVersion", "evidenceStatus", "evidenceRefs"],
+        "properties": {
+          "criterionCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+          "rawScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "weightedScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "calculationVersion": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "evidenceStatus": { "$ref": "#/components/schemas/EvidenceStatus" },
+          "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 100 },
+          "explanation": { "type": "string", "maxLength": 2000 }
+        },
+        "additionalProperties": false,
+        "description": "非零 AI 评分必须至少有一个可定位证据，服务端执行该跨字段校验。"
+      },
+      "HardFilterResult": {
+        "type": "object",
+        "required": ["passed", "items"],
+        "properties": {
+          "passed": { "type": "boolean" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["constraintCode", "passed", "evidenceRefs"],
+              "properties": {
+                "constraintCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+                "passed": { "type": "boolean" },
+                "reason": { "type": "string", "maxLength": 1000 },
+                "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 20 }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MatchResult": {
+        "type": "object",
+        "required": ["id", "matchRunId", "taskCandidateRef", "candidate", "resumeVersionRef", "scorecardVersionRef", "rank", "totalScore", "recommendationLevel", "hardFilterResult", "criterionScores", "confidence", "reviewStatus", "version"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "matchRunId": { "$ref": "#/components/schemas/Uuid" },
+          "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "candidate": { "$ref": "#/components/schemas/CandidateSummary" },
+          "resumeVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "rank": { "type": "integer", "minimum": 1 },
+          "totalScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "recommendationLevel": { "type": "string", "enum": ["NOT_RECOMMENDED", "REVIEW", "RECOMMENDED", "STRONGLY_RECOMMENDED"] },
+          "hardFilterResult": { "$ref": "#/components/schemas/HardFilterResult" },
+          "criterionScores": { "type": "array", "items": { "$ref": "#/components/schemas/CriterionScore" }, "minItems": 1, "maxItems": 50 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "reviewStatus": { "$ref": "#/components/schemas/MatchReviewStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "needsVerification": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 50 }
+        },
+        "additionalProperties": false
+      },
+      "MatchRunResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/MatchRun" } } }
+        ]
+      },
+      "MatchResultPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/MatchResult" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "MatchResultResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/MatchResult" } } }
+        ]
+      },
+      "TaskCandidatePageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/TaskCandidate" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "CandidateInvitationPlan": {
+        "type": "object",
+        "required": ["connectorId", "templateId", "deadline", "channel", "messageTemplateId", "externalImpactSummary"],
+        "properties": {
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "templateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "deadline": { "type": "string", "format": "date-time" },
+          "channel": { "type": "string", "enum": ["SMS", "EMAIL", "ENTERPRISE_MESSAGE"] },
+          "messageTemplateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "externalImpactSummary": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListPreviewRequest": {
+        "type": "object",
+        "required": ["matchRunRef", "taskCandidateRefs", "invitationPlan"],
+        "properties": {
+          "matchRunRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "taskCandidateRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "minItems": 1, "maxItems": 500, "uniqueItems": true },
+          "invitationPlan": { "$ref": "#/components/schemas/CandidateInvitationPlan" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListPreviewItem": {
+        "type": "object",
+        "required": ["taskCandidateRef", "matchResultRef", "candidate", "evidenceRefs", "needsVerification"],
+        "properties": {
+          "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "matchResultRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "candidate": { "$ref": "#/components/schemas/CandidateSummary" },
+          "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 100 },
+          "needsVerification": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 50 }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListPreview": {
+        "type": "object",
+        "required": ["id", "taskId", "matchRunRef", "items", "invitationPlan", "inputHash", "expiresAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "matchRunRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/CandidateListPreviewItem" }, "minItems": 1, "maxItems": 500 },
+          "invitationPlan": { "$ref": "#/components/schemas/CandidateInvitationPlan" },
+          "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListPreviewResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/CandidateListPreview" } } }
+        ]
+      },
+      "CandidateListReviewRequest": {
+        "type": "object",
+        "required": ["previewRef", "inputHash", "requiredRole"],
+        "properties": {
+          "previewRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "requiredRole": { "type": "string", "enum": ["RECRUITMENT_MANAGER", "HIRING_MANAGER"] },
+          "assigneeUserId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "comment": { "type": ["string", "null"], "maxLength": 2000 },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListConfirmRequest": {
+        "type": "object",
+        "required": ["previewRef", "checkpointId"],
+        "properties": {
+          "previewRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "checkpointId": { "$ref": "#/components/schemas/Uuid" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListVersion": {
+        "type": "object",
+        "required": ["id", "taskId", "versionNo", "previewRef", "matchRunRef", "taskCandidateRefs", "invitationPlan", "checkpointRef", "confirmedBy", "confirmedAt", "contentHash"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "previewRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "matchRunRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "taskCandidateRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "minItems": 1, "maxItems": 500, "uniqueItems": true },
+          "invitationPlan": { "$ref": "#/components/schemas/CandidateInvitationPlan" },
+          "checkpointRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "confirmedBy": { "$ref": "#/components/schemas/UserRef" },
+          "confirmedAt": { "type": "string", "format": "date-time" },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateListResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/CandidateListVersion" } } }
+        ]
+      },
+      "InterviewBatchStatus": { "type": "string", "enum": ["DRAFT", "SENDING", "ACTIVE", "COMPLETED", "PARTIAL", "CANCELLED", "FAILED"] },
+      "InterviewStatus": { "type": "string", "enum": ["DRAFT", "PENDING_SEND", "SENT", "DELIVERED", "OPENED", "IN_PROGRESS", "COMPLETED", "EXPIRED", "DECLINED", "CANCELLED", "FAILED"] },
+      "InterviewBatchPreviewRequest": {
+        "type": "object",
+        "required": ["candidateListVersionRef", "connectorId", "templateId", "deadline", "channel", "messageTemplateId"],
+        "properties": {
+          "candidateListVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "templateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "name": { "type": "string", "maxLength": 200 },
+          "deadline": { "type": "string", "format": "date-time" },
+          "channel": { "type": "string", "enum": ["SMS", "EMAIL", "ENTERPRISE_MESSAGE"] },
+          "messageTemplateId": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "additionalProperties": false
+      },
+      "InterviewBatchPreviewRecipient": {
+        "type": "object",
+        "required": ["taskCandidateRef", "displayName", "contactMask", "renderStatus", "validationIssues"],
+        "properties": {
+          "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "contactMask": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "renderStatus": { "type": "string", "enum": ["READY", "BLOCKED"] },
+          "renderedSubject": { "type": ["string", "null"], "maxLength": 300 },
+          "renderedMessage": { "type": ["string", "null"], "maxLength": 4000 },
+          "validationIssues": { "type": "array", "items": { "$ref": "#/components/schemas/ErrorDetail" }, "maxItems": 50 }
+        },
+        "additionalProperties": false
+      },
+      "InterviewBatchPreview": {
+        "type": "object",
+        "required": ["id", "taskId", "candidateListVersionRef", "recipients", "readyCount", "blockedCount", "contentHash", "expiresAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "candidateListVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "recipients": { "type": "array", "items": { "$ref": "#/components/schemas/InterviewBatchPreviewRecipient" }, "maxItems": 500 },
+          "readyCount": { "type": "integer", "minimum": 0 },
+          "blockedCount": { "type": "integer", "minimum": 0 },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "InterviewBatchPreviewResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/InterviewBatchPreview" } } }
+        ]
+      },
+      "InterviewBatchCreateRequest": {
+        "type": "object",
+        "required": ["candidateListVersionRef", "connectorId", "templateId", "deadline", "channel", "messageTemplateId", "previewHash"],
+        "properties": {
+          "candidateListVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "templateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "name": { "type": "string", "maxLength": 200 },
+          "deadline": { "type": "string", "format": "date-time" },
+          "channel": { "type": "string", "enum": ["SMS", "EMAIL", "ENTERPRISE_MESSAGE"] },
+          "messageTemplateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "previewHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      },
+      "InterviewBatchSendRequest": {
+        "type": "object",
+        "required": ["previewHash", "confirmation"],
+        "properties": {
+          "previewHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "confirmation": { "$ref": "#/components/schemas/HumanConfirmation" }
+        },
+        "additionalProperties": false
+      },
+      "InterviewBatch": {
+        "type": "object",
+        "required": ["id", "taskId", "candidateListVersionRef", "connectorId", "name", "deadline", "status", "version", "interviews", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "candidateListVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "deadline": { "type": "string", "format": "date-time" },
+          "status": { "$ref": "#/components/schemas/InterviewBatchStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "interviews": { "type": "array", "items": { "$ref": "#/components/schemas/Interview" }, "maxItems": 500 },
+          "createdAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "Interview": {
+        "type": "object",
+        "required": ["id", "batchId", "taskCandidateRef", "status", "version", "deadline", "channel", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "batchId": { "$ref": "#/components/schemas/Uuid" },
+          "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "status": { "$ref": "#/components/schemas/InterviewStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "deadline": { "type": "string", "format": "date-time" },
+          "channel": { "type": "string", "enum": ["SMS", "EMAIL", "ENTERPRISE_MESSAGE"] },
+          "providerInterviewRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "invitedAt": { "type": ["string", "null"], "format": "date-time" },
+          "completedAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastRemindedAt": { "type": ["string", "null"], "format": "date-time" },
+          "failureCode": { "type": ["string", "null"], "maxLength": 100 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "InterviewReminderRequest": {
+        "type": "object",
+        "required": ["messageTemplateId", "reason"],
+        "properties": {
+          "messageTemplateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        },
+        "additionalProperties": false
+      },
+      "InterviewDeadlinePatchRequest": {
+        "type": "object",
+        "required": ["deadline", "reason"],
+        "properties": {
+          "deadline": { "type": "string", "format": "date-time" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        },
+        "additionalProperties": false
+      },
+      "ReasonRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 2000 } },
+        "additionalProperties": false
+      },
+      "InterviewResultVersion": {
+        "type": "object",
+        "required": ["id", "interviewId", "versionNo", "validityStatus", "providerPayloadHash", "structuredAnswers", "providerScores", "receivedAt", "evidenceRefs"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "interviewId": { "$ref": "#/components/schemas/Uuid" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "validityStatus": { "type": "string", "enum": ["VALID", "PARTIAL", "INVALID"] },
+          "providerPayloadHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "transcriptRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "structuredAnswers": { "type": "array", "items": { "type": "object" }, "maxItems": 500 },
+          "providerScores": { "type": "object", "additionalProperties": { "type": "number" } },
+          "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 500 },
+          "receivedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "InterviewBatchResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/InterviewBatch" } } }
+        ]
+      },
+      "InterviewResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/Interview" } } }
+        ]
+      },
+      "InterviewResultResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/InterviewResultVersion" } } }
+        ]
+      },
+      "EvaluationRunCreateRequest": {
+        "type": "object",
+        "required": ["taskCandidateRefs", "scorecardVersionRef"],
+        "properties": {
+          "taskCandidateRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "minItems": 1, "maxItems": 500, "uniqueItems": true },
+          "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "forceRegenerate": { "type": "boolean", "default": false }
+        },
+        "additionalProperties": false
+      },
+      "EvaluationStatus": { "type": "string", "enum": ["DRAFT", "GENERATED", "IN_REVIEW", "CONFIRMED", "SUPERSEDED"] },
+      "EvaluationDecision": { "type": "string", "enum": ["ADVANCE", "HOLD", "REJECT"] },
+      "EvaluationRisk": {
+        "type": "object",
+        "required": ["code", "type", "summary", "severity", "evidenceRefs"],
+        "properties": {
+          "code": { "type": "string", "maxLength": 80 },
+          "type": { "type": "string", "enum": ["FACT_CONFLICT", "INSUFFICIENT_EVIDENCE", "FOLLOW_UP_REQUIRED"] },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+          "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 100 }
+        },
+        "additionalProperties": false
+      },
+      "Evaluation": {
+        "type": "object",
+        "required": ["id", "taskId", "taskCandidateRef", "versionNo", "version", "status", "matchResultRef", "interviewResultVersionRefs", "scorecardVersionRef", "resumeScore", "interviewScore", "finalScore", "strengths", "risks", "revisionOfRef", "revisionReason", "confirmationCheckpointRef", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "status": { "$ref": "#/components/schemas/EvaluationStatus" },
+          "matchResultRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "interviewResultVersionRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "minItems": 1, "uniqueItems": true },
+          "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "resumeScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "interviewScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "assessmentScore": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "finalScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "strengths": { "type": "array", "items": { "type": "string", "maxLength": 1000 }, "maxItems": 50 },
+          "risks": { "type": "array", "items": { "$ref": "#/components/schemas/EvaluationRisk" }, "maxItems": 100 },
+          "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 500 },
+          "suggestedDecision": { "oneOf": [{ "$ref": "#/components/schemas/EvaluationDecision" }, { "type": "null" }] },
+          "decision": { "oneOf": [{ "$ref": "#/components/schemas/EvaluationDecision" }, { "type": "null" }] },
+          "decisionReason": { "type": ["string", "null"], "maxLength": 2000 },
+          "revisionOfRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "revisionReason": { "type": ["string", "null"], "maxLength": 2000 },
+          "confirmationCheckpointRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "confirmedBy": { "oneOf": [{ "$ref": "#/components/schemas/UserRef" }, { "type": "null" }] },
+          "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "EvaluationConfirmRequest": {
+        "type": "object",
+        "required": ["decision", "reason", "confirmation"],
+        "properties": {
+          "decision": { "$ref": "#/components/schemas/EvaluationDecision" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "acknowledgedRiskCodes": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "uniqueItems": true },
+          "confirmation": { "$ref": "#/components/schemas/HumanConfirmation" }
+        },
+        "additionalProperties": false
+      },
+      "EvaluationHumanRevision": {
+        "type": "object",
+        "properties": {
+          "strengths": { "type": "array", "items": { "type": "string", "maxLength": 1000 }, "maxItems": 50 },
+          "risks": { "type": "array", "items": { "$ref": "#/components/schemas/EvaluationRisk" }, "maxItems": 100 },
+          "decision": { "oneOf": [{ "$ref": "#/components/schemas/EvaluationDecision" }, { "type": "null" }] },
+          "decisionReason": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      },
+      "EvaluationRevisionRequest": {
+        "type": "object",
+        "required": ["revision", "reason", "confirmation"],
+        "properties": {
+          "revision": { "$ref": "#/components/schemas/EvaluationHumanRevision" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "confirmation": { "$ref": "#/components/schemas/HumanConfirmation" }
+        },
+        "additionalProperties": false
+      },
+      "EvaluationResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/Evaluation" } } }
+        ]
+      },
+      "EvaluationPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Evaluation" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "HumanCheckpointType": { "type": "string", "enum": ["CREATE_TASK", "APPROVE_POSITION_PLAN", "PUBLISH_JOB", "CONFIRM_CANDIDATE_LIST", "CONFIRM_EVALUATION", "PUBLISH_KNOWLEDGE"] },
+      "HumanCheckpointStatus": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "EXPIRED", "CANCELLED"] },
+      "HumanCheckpoint": {
+        "type": "object",
+        "required": ["id", "taskId", "type", "resourceRef", "status", "requiredRole", "inputHash", "version", "requestedBy", "requestedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "type": { "$ref": "#/components/schemas/HumanCheckpointType" },
+          "resourceRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "status": { "$ref": "#/components/schemas/HumanCheckpointStatus" },
+          "requiredRole": { "type": "string", "enum": ["RECRUITER", "RECRUITMENT_MANAGER", "HIRING_MANAGER", "KNOWLEDGE_ADMIN", "CUSTOMER_APPROVER"] },
+          "assigneeUserId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "summary": { "type": "string", "maxLength": 2000 },
+          "requestedBy": { "$ref": "#/components/schemas/UserRef" },
+          "requestedAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+          "decision": { "type": ["string", "null"], "enum": ["APPROVE", "REJECT", "CANCEL", null] },
+          "comment": { "type": ["string", "null"], "maxLength": 2000 },
+          "decidedBy": { "oneOf": [{ "$ref": "#/components/schemas/UserRef" }, { "type": "null" }] },
+          "decidedAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "HumanReviewRequest": {
+        "type": "object",
+        "required": ["requiredRole", "inputHash"],
+        "properties": {
+          "requiredRole": { "type": "string", "enum": ["RECRUITMENT_MANAGER", "HIRING_MANAGER", "KNOWLEDGE_ADMIN"] },
+          "assigneeUserId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "comment": { "type": ["string", "null"], "maxLength": 2000 },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "HumanCheckpointDecisionRequest": {
+        "type": "object",
+        "required": ["decision", "inputHash"],
+        "properties": {
+          "decision": { "type": "string", "enum": ["APPROVE", "REJECT", "CANCEL"] },
+          "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "comment": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "HumanCheckpointResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/HumanCheckpoint" } } }
+        ]
+      },
+      "HumanCheckpointPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/HumanCheckpoint" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "KnowledgeType": { "type": "string", "enum": ["JOB_KNOWLEDGE", "TALENT_PROFILE", "POLICY_PROCESS", "EVALUATION_STANDARD"] },
+      "KnowledgeStatus": { "type": "string", "enum": ["DRAFT", "IN_REVIEW", "PUBLISHED", "DISABLED", "ARCHIVED"] },
+      "KnowledgeParseStatus": { "type": "string", "enum": ["UPLOADED", "PARSING", "PARSED", "PARSE_FAILED"] },
+      "KnowledgeIndexStatus": { "type": "string", "enum": ["NOT_INDEXED", "INDEXING", "INDEXED", "INDEX_FAILED"] },
+      "KnowledgeUploadSessionStatus": { "type": "string", "enum": ["CREATED", "UPLOADED", "COMPLETED", "EXPIRED", "FAILED"] },
+      "KnowledgeUploadSessionCreateRequest": {
+        "type": "object",
+        "required": ["fileName", "mimeType", "sizeBytes", "sha256"],
+        "properties": {
+          "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mimeType": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "sizeBytes": { "type": "integer", "minimum": 1, "maximum": 104857600 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeUploadSession": {
+        "type": "object",
+        "required": ["id", "documentId", "status", "version", "uploadUrl", "uploadHeaders", "objectKey", "expiresAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "documentId": { "$ref": "#/components/schemas/Uuid" },
+          "status": { "$ref": "#/components/schemas/KnowledgeUploadSessionStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "uploadUrl": { "type": "string", "format": "uri", "readOnly": true },
+          "uploadHeaders": { "type": "object", "additionalProperties": { "type": "string" }, "readOnly": true },
+          "objectKey": { "type": "string", "minLength": 1, "maxLength": 500, "readOnly": true },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeUploadCompleteRequest": {
+        "type": "object",
+        "required": ["sizeBytes", "sha256"],
+        "properties": {
+          "sizeBytes": { "type": "integer", "minimum": 1, "maximum": 104857600 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "effectiveFrom": { "type": ["string", "null"], "format": "date-time" },
+          "effectiveTo": { "type": ["string", "null"], "format": "date-time" },
+          "changeSummary": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeUploadSessionResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/KnowledgeUploadSession" } } }
+        ]
+      },
+      "KnowledgeVersionStatus": { "type": "string", "enum": ["DRAFT", "IN_REVIEW", "PUBLISHED", "DISABLED"] },
+      "KnowledgeVersion": {
+        "type": "object",
+        "required": ["id", "documentId", "versionNo", "version", "fileName", "mimeType", "sha256", "publicationStatus", "parseStatus", "indexStatus", "approvalCheckpointRef", "createdAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "documentId": { "$ref": "#/components/schemas/Uuid" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mimeType": { "type": "string", "maxLength": 120 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "contentHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "publicationStatus": { "$ref": "#/components/schemas/KnowledgeVersionStatus" },
+          "parseStatus": { "$ref": "#/components/schemas/KnowledgeParseStatus" },
+          "indexStatus": { "$ref": "#/components/schemas/KnowledgeIndexStatus" },
+          "parserVersion": { "type": ["string", "null"], "maxLength": 100 },
+          "effectiveFrom": { "type": ["string", "null"], "format": "date-time" },
+          "effectiveTo": { "type": ["string", "null"], "format": "date-time" },
+          "approvalCheckpointRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "approvedBy": { "oneOf": [{ "$ref": "#/components/schemas/UserRef" }, { "type": "null" }] },
+          "approvedAt": { "type": ["string", "null"], "format": "date-time" },
+          "failureCode": { "type": ["string", "null"], "maxLength": 100 },
+          "createdAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeDocument": {
+        "type": "object",
+        "required": ["id", "title", "type", "ownerOrganizationRef", "classification", "status", "version", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "type": { "$ref": "#/components/schemas/KnowledgeType" },
+          "ownerOrganizationRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "classification": { "type": "string", "enum": ["INTERNAL", "CONFIDENTIAL", "RESTRICTED"] },
+          "status": { "$ref": "#/components/schemas/KnowledgeStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "tags": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "uniqueItems": true, "maxItems": 100 },
+          "accessPolicyId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "retentionUntil": { "type": ["string", "null"], "format": "date-time" },
+          "currentVersion": { "oneOf": [{ "$ref": "#/components/schemas/KnowledgeVersion" }, { "type": "null" }] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeDocumentCreateRequest": {
+        "type": "object",
+        "required": ["title", "type", "ownerOrganizationRef", "classification"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "type": { "$ref": "#/components/schemas/KnowledgeType" },
+          "ownerOrganizationRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "classification": { "type": "string", "enum": ["INTERNAL", "CONFIDENTIAL", "RESTRICTED"] },
+          "tags": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "uniqueItems": true, "maxItems": 100 },
+          "accessPolicyId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "retentionUntil": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeDocumentPatchRequest": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "classification": { "type": "string", "enum": ["INTERNAL", "CONFIDENTIAL", "RESTRICTED"] },
+          "tags": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "uniqueItems": true, "maxItems": 100 },
+          "accessPolicyId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "retentionUntil": { "type": ["string", "null"], "format": "date-time" },
+          "statusCommand": { "type": "string", "enum": ["DISABLE", "RESTORE", "ARCHIVE"] },
+          "reason": { "type": "string", "maxLength": 2000 }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      },
+      "KnowledgeVersionUploadRequest": {
+        "type": "object",
+        "required": ["file", "sha256"],
+        "properties": {
+          "file": { "type": "string", "format": "binary" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "effectiveFrom": { "type": ["string", "null"], "format": "date-time" },
+          "effectiveTo": { "type": ["string", "null"], "format": "date-time" },
+          "changeSummary": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeDocumentResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/KnowledgeDocument" } } }
+        ]
+      },
+      "KnowledgeVersionResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/KnowledgeVersion" } } }
+        ]
+      },
+      "KnowledgeCitation": {
+        "type": "object",
+        "required": ["evidenceRef", "documentRef", "knowledgeVersionRef", "documentTitle", "sourceLocator", "quoteHash", "accessLevel", "quote"],
+        "properties": {
+          "evidenceRef": { "$ref": "#/components/schemas/EvidenceRef" },
+          "documentRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "knowledgeVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "documentTitle": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "sourceLocator": { "$ref": "#/components/schemas/EvidenceSourceLocator" },
+          "quoteHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "accessLevel": { "type": "string", "enum": ["FULL_TEXT", "METADATA_ONLY"] },
+          "quote": { "type": ["string", "null"], "maxLength": 4000 }
+        },
+        "additionalProperties": false
+      },
+      "KnowledgeCitationResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/KnowledgeCitation" } } }
+        ]
+      },
+      "KnowledgeVersionPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/KnowledgeVersion" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "KnowledgeDocumentPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/KnowledgeDocument" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "AuditActorType": { "type": "string", "enum": ["USER", "AGENT", "SYSTEM", "CONNECTOR"] },
+      "AuditOutcome": { "type": "string", "enum": ["SUCCEEDED", "DENIED", "FAILED", "PARTIAL"] },
+      "AuditEvent": {
+        "type": "object",
+        "required": ["id", "actorType", "actorId", "resourceType", "resourceId", "resourceVersion", "action", "outcome", "occurredAt", "traceId", "requestId", "eventHash"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "actorType": { "$ref": "#/components/schemas/AuditActorType" },
+          "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "impersonatorId": { "type": ["string", "null"], "maxLength": 128 },
+          "resourceType": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "resourceId": { "$ref": "#/components/schemas/Uuid" },
+          "resourceVersion": { "$ref": "#/components/schemas/Version" },
+          "taskId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "action": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "outcome": { "$ref": "#/components/schemas/AuditOutcome" },
+          "reasonCode": { "type": ["string", "null"], "maxLength": 100 },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "requestId": { "$ref": "#/components/schemas/Uuid" },
+          "embedClientId": { "type": ["string", "null"], "maxLength": 80 },
+          "embedSessionId": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] },
+          "parentOrigin": { "type": ["string", "null"], "format": "uri" },
+          "hostContextHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "beforeSummary": { "type": ["object", "null"], "description": "脱敏摘要。" },
+          "afterSummary": { "type": ["object", "null"], "description": "脱敏摘要。" },
+          "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 100 },
+          "previousHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "eventHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      },
+      "AuditEventPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AuditEvent" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "AuditEventResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/AuditEvent" } } }
+        ]
+      },
+      "AuditTrace": {
+        "type": "object",
+        "required": ["traceId", "chainValid", "events", "startedAt", "finishedAt"],
+        "properties": {
+          "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "chainValid": { "type": "boolean" },
+          "agentRun": { "oneOf": [{ "$ref": "#/components/schemas/AgentRun" }, { "type": "null" }] },
+          "events": { "type": "array", "items": { "$ref": "#/components/schemas/AuditEvent" }, "maxItems": 5000 },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "AuditTraceResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/AuditTrace" } } }
+        ]
+      },
+      "ConnectorType": { "type": "string", "enum": ["ATS", "TALENT_POOL", "INTERVIEW", "MESSAGE", "OA", "IDENTITY"] },
+      "ConnectorStatus": { "type": "string", "enum": ["CONFIGURING", "ACTIVE", "DEGRADED", "DISABLED", "ERROR"] },
+      "ConnectorAuthMode": { "type": "string", "enum": ["OAUTH2_CLIENT_CREDENTIALS", "API_KEY", "HMAC", "MTLS"] },
+      "ConnectorCredentialState": { "type": "string", "enum": ["MISSING", "CONFIGURED", "EXPIRING", "EXPIRED", "INVALID"] },
+      "ConnectorCreateRequest": {
+        "type": "object",
+        "required": ["type", "vendor", "name", "endpoint", "apiVersion", "authMode", "credentials"],
+        "properties": {
+          "type": { "$ref": "#/components/schemas/ConnectorType" },
+          "vendor": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "endpoint": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "apiVersion": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "authMode": { "$ref": "#/components/schemas/ConnectorAuthMode" },
+          "credentials": { "type": "object", "additionalProperties": { "type": "string" }, "minProperties": 1, "writeOnly": true },
+          "dataScopes": { "type": "array", "items": { "type": "string", "maxLength": 120 }, "uniqueItems": true }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorPatchRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "endpoint": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "apiVersion": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "authMode": { "$ref": "#/components/schemas/ConnectorAuthMode" },
+          "credentials": { "type": "object", "additionalProperties": { "type": "string" }, "minProperties": 1, "writeOnly": true },
+          "dataScopes": { "type": "array", "items": { "type": "string", "maxLength": 120 }, "uniqueItems": true },
+          "statusCommand": { "type": "string", "enum": ["ENABLE", "DISABLE"] },
+          "reason": { "type": ["string", "null"], "maxLength": 2000 }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      },
+      "ConnectorCapabilityCode": {
+        "type": "string",
+        "enum": ["READ_INCREMENTAL", "WEBHOOK_EVENTS", "JOB_CREATE", "JOB_PUBLISH", "RESUME_SEARCH", "RESUME_ATTACHMENT_READ", "APPLICATION_STAGE_WRITE", "INTERVIEW_CREATE", "INTERVIEW_RESULT_READ", "MESSAGE_TEMPLATE_SEND", "MESSAGE_DELIVERY_STATUS", "APPROVAL_CREATE", "APPROVAL_RESULT_READ"]
+      },
+      "Connector": {
+        "type": "object",
+        "required": ["id", "type", "vendor", "name", "status", "version", "endpoint", "apiVersion", "authMode", "credentialState", "dataScopes", "lastHealthAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "type": { "$ref": "#/components/schemas/ConnectorType" },
+          "vendor": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "status": { "$ref": "#/components/schemas/ConnectorStatus" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "endpoint": { "type": "string", "format": "uri" },
+          "apiVersion": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "authMode": { "$ref": "#/components/schemas/ConnectorAuthMode" },
+          "credentialState": { "$ref": "#/components/schemas/ConnectorCredentialState" },
+          "dataScopes": { "type": "array", "items": { "type": "string", "maxLength": 120 }, "uniqueItems": true },
+          "lastHealthAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorCapabilities": {
+        "type": "object",
+        "required": ["connector", "supportedVersions", "capabilities", "rateLimits", "batchLimit", "webhookEvents", "dataScopes", "knownLimitations"],
+        "properties": {
+          "connector": { "$ref": "#/components/schemas/Connector" },
+          "supportedVersions": { "type": "array", "items": { "type": "string", "maxLength": 40 }, "minItems": 1, "uniqueItems": true },
+          "capabilities": { "type": "array", "items": { "$ref": "#/components/schemas/ConnectorCapabilityCode" }, "uniqueItems": true },
+          "rateLimits": {
+            "type": "object",
+            "properties": {
+              "requestsPerMinute": { "type": "integer", "minimum": 1 },
+              "concurrentRequests": { "type": "integer", "minimum": 1 }
+            },
+            "additionalProperties": false
+          },
+          "batchLimit": { "type": "integer", "minimum": 1 },
+          "webhookEvents": { "type": "array", "items": { "type": "string", "maxLength": 120 }, "uniqueItems": true },
+          "dataScopes": { "type": "array", "items": { "type": "string", "maxLength": 120 }, "uniqueItems": true },
+          "knownLimitations": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 100 }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/Connector" } } }
+        ]
+      },
+      "ConnectorHealthCheckRequest": {
+        "type": "object",
+        "required": ["checks"],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["CONNECTIVITY", "AUTHENTICATION", "PERMISSIONS", "CAPABILITIES", "READ_PROBE", "WRITE_DRY_RUN"] },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorHealthCheckItem": {
+        "type": "object",
+        "required": ["check", "status", "message"],
+        "properties": {
+          "check": { "type": "string", "maxLength": 80 },
+          "status": { "type": "string", "enum": ["PENDING", "PASSED", "WARNING", "FAILED"] },
+          "message": { "type": "string", "maxLength": 1000 },
+          "latencyMs": { "type": ["integer", "null"], "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorHealthCheck": {
+        "type": "object",
+        "required": ["id", "connectorId", "status", "items", "requestedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "status": { "type": "string", "enum": ["QUEUED", "RUNNING", "PASSED", "WARNING", "FAILED"] },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ConnectorHealthCheckItem" }, "maxItems": 20 },
+          "requestedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorHealthCheckResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/ConnectorHealthCheck" } } }
+        ]
+      },
+      "ConnectorMappingEntry": {
+        "type": "object",
+        "required": ["direction", "objectType", "sourceField", "targetField", "transform"],
+        "properties": {
+          "direction": { "type": "string", "enum": ["INBOUND", "OUTBOUND"] },
+          "objectType": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "sourceField": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "targetField": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "transform": { "type": "string", "enum": ["IDENTITY", "ENUM_MAP", "DATE_FORMAT", "BOOLEAN_MAP", "CONCAT", "STATIC_VALUE"] },
+          "parameters": { "type": "object", "description": "仅允许已注册转换器的声明式参数，不得包含脚本或可执行表达式。" },
+          "required": { "type": "boolean", "default": false }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorMapping": {
+        "type": "object",
+        "required": ["id", "connectorId", "version", "entries", "contentHash", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "entries": { "type": "array", "items": { "$ref": "#/components/schemas/ConnectorMappingEntry" }, "maxItems": 1000 },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorMappingPatchRequest": {
+        "type": "object",
+        "required": ["entries", "changeSummary"],
+        "properties": {
+          "entries": { "type": "array", "items": { "$ref": "#/components/schemas/ConnectorMappingEntry" }, "maxItems": 1000 },
+          "changeSummary": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorMappingResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/ConnectorMapping" } } }
+        ]
+      },
+      "ConnectorSyncJobCreateRequest": {
+        "type": "object",
+        "required": ["mode", "objectTypes"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["INCREMENTAL", "FULL"] },
+          "objectTypes": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "minItems": 1, "uniqueItems": true },
+          "resumeCursor": { "type": ["string", "null"], "maxLength": 1000 },
+          "changedAfter": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorSyncJob": {
+        "type": "object",
+        "required": ["id", "connectorId", "mode", "objectTypes", "status", "processedCount", "failedCount", "requestedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "mode": { "type": "string", "enum": ["INCREMENTAL", "FULL"] },
+          "objectTypes": { "type": "array", "items": { "type": "string", "maxLength": 80 }, "minItems": 1, "uniqueItems": true },
+          "status": { "type": "string", "enum": ["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"] },
+          "processedCount": { "type": "integer", "minimum": 0 },
+          "failedCount": { "type": "integer", "minimum": 0 },
+          "resumeCursor": { "type": ["string", "null"], "maxLength": 1000 },
+          "errorSummary": { "type": ["string", "null"], "maxLength": 2000 },
+          "requestedAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorSyncJobResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/ConnectorSyncJob" } } }
+        ]
+      },
+      "ConnectorPageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Connector" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
+        ]
+      },
+      "ConnectorCapabilitiesResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/ConnectorCapabilities" } } }
+        ]
+      }
+    }
+  }
+}

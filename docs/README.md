@@ -12,6 +12,9 @@
 | [领域模型](architecture/domain-model.md) | 核心实体、聚合边界、状态、版本和审计约束 | 前后端、数据、测试 |
 | [集成契约](api/integration-contract.md) | 如何连接客户 ATS、人才库、面试、消息和审批系统 | 后端、实施、客户 IT |
 | [ATS 嵌入契约](api/embed-contract.md) | 如何将智能体安全嵌入客户 ATS 并传递身份、上下文、主题和导航 | 前端、后端、客户 ATS、安全 |
+| [接口总清单](api/interface-inventory.md) | 每类业务输入输出的协议、方向、权威源、权限门禁、版本和优先级 | 产品、前后端、实施、测试 |
+| [OpenAPI 3.1](../packages/contracts/openapi/smartai-core-v1.json) | 嵌入会话和招聘核心 HTTP API 的机器可读契约 | 前后端、测试、客户 IT |
+| [AsyncAPI 3.0](../packages/contracts/asyncapi/smartai-events-v1.json) | Webhook、领域事件、AI 命令结果、重试和 DLQ 的机器可读契约 | 后端、AI、集成、运维 |
 | [MVP 实施清单](roadmap/mvp-backlog.md) | 12 至 16 周内先做什么、完成标准和风险是什么 | 项目经理、研发、测试 |
 
 ## 统一原则
@@ -40,7 +43,7 @@
 ```text
 apps/
   web/                  React + TypeScript 共享业务模块与三种 Shell
-  host-harness/         ATS 宿主协议与嵌入 E2E 测试壳
+  host-harness/         无后端认证的 ATS 宿主协议模拟与嵌入 E2E 测试壳
 services/
   core-api/             Spring Boot 招聘业务核心与集成层
   ai-service/           FastAPI 模型、检索、解析与评价服务
@@ -52,3 +55,5 @@ deploy/                 本地编排、Kubernetes 与环境配置
 ```
 
 目录迁移应分阶段进行。当前 `src/` 前端继续作为可运行基线，在 API 契约和模块边界稳定前不做一次性重写。
+
+当前仓库已先落地 `apps/host-harness/`、`packages/embed-sdk/` 和 `packages/contracts/`。提交前运行 `npm run contracts:check` 与 `npm run test:embed`，确保接口引用、operationId 和宿主消息安全约束未回退。

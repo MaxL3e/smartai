@@ -1,8 +1,9 @@
 # 知聘 · 招聘智能体体验平台
 
-面向央国企招聘场景的可解释招聘智能体前端演示产品。平台以独立应用形式跑通招聘任务创建、岗位方案生成、人才匹配、在线面试、综合评价、知识维护与运行审计，后续可通过 API 或客户侧适配层接入不同招聘系统。
+面向央国企招聘场景的可解释招聘智能体产品基线。平台既可独立演示招聘任务创建、岗位方案生成、人才匹配、在线面试、综合评价、知识维护与运行审计，也可通过 Embed SDK 以侧栏或全页工作区嵌入客户 ATS。
 
 - 在线体验：[https://maxl3e.github.io/smartai/](https://maxl3e.github.io/smartai/)
+- ATS 嵌入协议模拟台（无后端认证）：[https://maxl3e.github.io/smartai/apps/host-harness/](https://maxl3e.github.io/smartai/apps/host-harness/)
 - 当前版本：纯前端可交互演示，不依赖后端数据库
 - 数据说明：演示数据均为虚构数据，不包含真实候选人信息
 
@@ -65,11 +66,14 @@
 - 面试邀约、提醒、结果回收和评价流程模拟
 - 知识资料维护、运行审计及常用导出功能
 - 浏览器本地持久化和响应式布局
+- 可复用的 iframe Embed SDK、精确 Origin 消息握手和宿主能力协商
+- ATS 岗位侧栏、候选人侧栏和全页工作区联调台
+- 招聘业务 OpenAPI、跨运行时 AsyncAPI 和接口总清单
 
 暂未实现：
 
 - 真实大模型、RAG、向量数据库和文档解析服务
-- 客户 ATS、人才库、在线面试、短信邮件和审批系统接口
+- 客户 ATS、人才库、在线面试、短信邮件和审批系统的真实连接器实现
 - 服务端数据库、用户登录、组织权限和多租户隔离
 - 真实候选人数据处理与生产环境合规能力
 
@@ -80,13 +84,18 @@
 - Lucide React
 - 浏览器 `localStorage`
 - GitHub Actions + GitHub Pages
+- OpenAPI 3.1 + AsyncAPI 3.0
 
 主要代码集中在：
 
 ```text
-src/App.jsx       页面、状态和演示业务逻辑
-src/styles.css    全局设计系统与响应式布局
-src/main.jsx      应用入口
+src/App.jsx                         页面、状态、演示业务逻辑与嵌入 Shell
+src/styles.css                      全局设计系统与响应式布局
+apps/host-harness/                  ATS 宿主联调台
+packages/embed-sdk/                 iframe 生命周期与宿主消息 SDK
+packages/contracts/openapi/         招聘业务和嵌入会话 HTTP 契约
+packages/contracts/asyncapi/        Webhook、领域事件和 AI 消息契约
+scripts/validate-contracts.mjs      契约完整性校验
 ```
 
 ## 本地运行
@@ -100,6 +109,14 @@ npm run dev
 
 Vite 默认地址为 `http://127.0.0.1:5173/`。如端口已占用，请以终端实际输出为准。
 
+本地 ATS 嵌入联调台位于：
+
+```text
+http://127.0.0.1:5173/apps/host-harness/
+```
+
+模拟台支持岗位侧栏、候选人侧栏、全页工作区、上下文切换、主题令牌和会话续期协议。它没有 ATS 后端、认证服务或真实令牌，“连接”“续期”“上下文接收”等状态只模拟消息时序，不代表服务端已经完成身份认证、令牌签发、权限交集或资源映射。真实客户环境必须由 ATS 后端创建会话并通过平台校验后才能显示业务数据。
+
 生产构建与本地预览：
 
 ```bash
@@ -111,6 +128,13 @@ GitHub Pages 专用构建：
 
 ```bash
 npm run build:pages
+```
+
+接口和 Embed SDK 回归校验：
+
+```bash
+npm run contracts:check
+npm run test:embed
 ```
 
 ## 数据与重置
@@ -160,4 +184,7 @@ git diff --check
 - [领域模型](docs/architecture/domain-model.md)
 - [客户系统集成契约](docs/api/integration-contract.md)
 - [ATS 宿主嵌入契约](docs/api/embed-contract.md)
+- [完整接口清单](docs/api/interface-inventory.md)
+- [OpenAPI 3.1 契约](packages/contracts/openapi/smartai-core-v1.json)
+- [AsyncAPI 3.0 契约](packages/contracts/asyncapi/smartai-events-v1.json)
 - [MVP 实施清单](docs/roadmap/mvp-backlog.md)
