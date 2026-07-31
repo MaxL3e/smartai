@@ -46,17 +46,21 @@ sequenceDiagram
 const client = await SmartAIEmbed.init({
   container: '#smartai-panel',
   embedOrigin: 'https://smartai.customer.example',
-  tokenProvider: () => hostApi.createSmartAiBootstrapToken(),
+  tokenProvider: ({ reason, sessionId }) => hostApi.createSmartAiBootstrapToken({ reason, sessionId }),
   context: {
+    scene: 'job',
+    enterpriseRef: { system: 'customer-ats', id: 'ORG-01' },
     taskRef: { system: 'customer-ats', id: 'T-1001', version: 3 },
     jobRef: { system: 'customer-ats', id: 'J-2001', version: 7 },
     candidateRef: { system: 'customer-ats', id: 'C-3001' },
-    applicationRef: { system: 'customer-ats', id: 'A-4001', version: 2 }
+    applicationRef: { system: 'customer-ats', id: 'A-4001', version: 2 },
+    contextVersion: 1,
+    nonce: crypto.randomUUID(),
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
   },
-  initialRoute: 'talent/detail',
+  initialRoute: 'talent',
   hostCapabilities: ['CONTEXT_PUSH', 'HOST_NAVIGATION', 'AUTH_REFRESH'],
-  theme: { mode: 'light', primaryColor: '#087f7a', density: 'compact' },
-  locale: 'zh-CN',
+  theme: { mode: 'light', brandColor: '#087f7a', density: 'compact' },
   onEvent(event) {}
 });
 
@@ -67,7 +71,9 @@ client.openStandalone();
 client.destroy();
 ```
 
-SDK 提供 ESM 和 UMD 构建并遵循 SemVer。生产必须固定版本并校验 SRI，不得自动使用 `latest`。
+当前仓库在 `packages/embed-sdk/` 提供带 TypeScript 声明的 ESM 实现，并以 `SmartAIEmbed.init` 作为客户公共入口；`createSmartAIEmbed` 只用于同仓库联调台。UMD、CDN 发布和 SRI 清单属于正式 SDK 发布任务，在完成前不得把源码入口作为生产 CDN 资源。生产必须固定 SemVer 版本，不得自动使用 `latest`。
+
+`apps/host-harness/` 是无后端的协议与布局模拟台，只能使用显式 `demoMode`，界面必须持续标记为“协议模拟会话”。模拟台中的“连接”“续期”“上下文接收”只演示消息时序，不代表 ATS 后端真实签发令牌、平台完成服务端认证或资源鉴权。生产构建在非指定演示域名上不接受该模式，且未完成 `token-exchange`、权限交集和资源映射前不得发送 `embed.initialized` 或展示业务数据。
 
 ## 4. 会话与令牌
 
@@ -76,7 +82,7 @@ SDK 提供 ESM 和 UMD 构建并遵循 SemVer。生产必须固定版本并校�
 3. 平台校验租户、用户映射、允许的父页面 Origin、上下文范围和权限。
 4. 平台返回 `sessionId`、`embedUrl` 和 30 至 60 秒内单次有效的 `bootstrapToken`。
 5. iframe 就绪后，SDK 通过精确 `targetOrigin` 传递令牌并建立 `MessageChannel`。
-6. iframe 调用 `POST /api/embed/v1/token-exchange`，换取 5 至 10 分钟访问令牌。
+6. iframe 将接收 `host.init` 时由浏览器 `event.origin` 观察到的父页面 Origin 作为 `observedParentOrigin`，调用 `POST /api/embed/v1/token-exchange`。平台将其与 Embed Session 绑定的纯 HTTPS Origin 精确比对后，换取 5 至 10 分钟访问令牌和 `HostContextResolution`；成功响应同时以 `ETag` 返回当前活动会话版本。
 7. 令牌到期前 iframe 请求宿主刷新，SDK 再从 ATS 后端取得一次性令牌。
 
 访问令牌仅保存在 iframe 内存，不进入 URL、Cookie、`localStorage`、日志或埋点。方案不依赖第三方 Cookie，浏览器不持有服务账号凭据和 Refresh Token。
@@ -89,6 +95,8 @@ SDK 提供 ESM 和 UMD 构建并遵循 SemVer。生产必须固定版本并校�
 
 | 字段 | 含义 |
 | --- | --- |
+| `scene` | 当前宿主场景：`job`、`candidate` 或 `task` |
+| `enterpriseRef` | 可选的客户企业/组织外部引用，不作为租户身份凭据 |
 | `jobRef` | 当前 ATS 岗位外部引用和版本 |
 | `taskRef` | 可选的 ATS 招聘任务引用 |
 | `candidateRef` | 可选的候选人引用 |
@@ -100,6 +108,18 @@ SDK 提供 ESM 和 UMD 构建并遵循 SemVer。生产必须固定版本并校�
 `tenant/user/scopes/host_origin` 只能来自签名令牌。所有资源引用必须经 `ExternalIdentity` 解析并重新执行租户、组织和资源权限校验。消息中禁止传姓名、联系方式、简历正文、面试转写、提示词或完整业务结果。
 
 上下文无权、过期或无法解析时必须清空旧详情并安全失败，不得猜测岗位或继续展示上一个候选人。
+
+`HostContext` 在 SDK、会话创建和服务端解析结果中统一使用 `scene`、`enterpriseRef`、`jobRef`、`taskRef`、`candidateRef`、`applicationRef`、路由提示、版本、nonce、有效期、语言和时区。`HostContextResolution` 在此基础上增加 `resolutionId`、`observedParentOrigin`、`contextHash`、内部 `resolvedRefs` 和 `resolvedAt`；它不是新的身份凭据。
+
+生产环境处理 `context.replace` 时必须经过服务端：
+
+1. iframe 从已校验的 `MessageChannel` 收到新的 `HostContext`，但不立即展示新业务数据。
+2. iframe 调用 `POST /api/embed/v1/sessions/{sessionId}/context-resolutions`，提交新上下文和本次消息实际观察到的 `observedParentOrigin`。
+3. 平台重新执行 Origin、租户、组织、资源映射、数据范围、版本和 nonce 校验，返回短期 `resolutionId/contextHash`，并在响应 `ETag` 中再次返回未被本次解析改变的当前活动会话版本。
+4. iframe 使用第 3 步返回的 ETag 调用 `PUT /api/embed/v1/sessions/{sessionId}/context`。平台原子替换活动上下文并返回新 ETag 后，iframe 才能发送 `context.accepted` 并展示新数据。
+5. 任何一步失败都清空旧详情并发送 `context.rejected`；不得仅凭宿主消息在前端本地接受生产上下文。
+
+嵌入 API 的错误状态遵循统一语义：`400` 为请求校验失败，`401` 为身份或一次性令牌无效，`403` 为 Origin、scope 或资源权限拒绝，`404` 为会话或映射不可见，`409` 为重放、幂等或版本冲突，`410` 为令牌、会话或解析结果已过期，`428` 为缺少 `If-Match`，`429` 为限流；`500/503/504` 分别表示平台内部错误、依赖不可用和上游超时。所有错误使用统一 `ErrorEnvelope`，可重试响应通过 `Retry-After` 给出建议等待时间。
 
 ## 6. 消息信封
 
@@ -123,7 +143,7 @@ iframe 到宿主：`embed.ready`、`embed.initialized`、`context.accepted`、`c
 
 双方校验 Origin、`event.source`、会话、Schema、消息大小、时间窗口和递增序号。禁止 `targetOrigin="*"`。有请求语义的消息必须以同一 `messageId` 作为 `replyTo` 返回结果。
 
-`postMessage` 只用于 UI 协作，不能代表确认岗位方案、确认名单、淘汰或录用等领域命令；业务写入必须调用服务端 API 并重复执行 RBAC、状态机、版本和幂等校验。
+`postMessage` 只用于 UI 协作，不能代表上下文已获服务端授权，也不能代表确认岗位方案、确认名单、淘汰或录用等领域命令；生产上下文替换和业务写入必须调用服务端 API 并重复执行 Origin、RBAC、数据范围、状态机、版本和幂等校验。
 
 ## 7. 能力协商
 

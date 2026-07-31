@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f3f5f6" />
+    <title>ATS 嵌入联调台 · 知聘</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ats-shell">
+      <header class="ats-topbar">
+        <div class="ats-brand">
+          <span class="ats-brand-mark">华</span>
+          <span><strong>华东能源人才管理系统</strong><small>招聘运营中心</small></span>
+        </div>
+        <nav aria-label="ATS 主导航">
+          <button>首页</button>
+          <button class="active">招聘管理</button>
+          <button>人才库</button>
+          <button>数据分析</button>
+        </nav>
+        <div class="ats-user"><span>集团人力资源部</span><i>李</i></div>
+      </header>
+
+      <section class="integration-toolbar" aria-label="嵌入联调控制">
+        <div class="scene-switch" role="group" aria-label="展示场景">
+          <button class="active" data-mode="job-sidebar">岗位侧栏</button>
+          <button data-mode="candidate-sidebar">候选人侧栏</button>
+          <button data-mode="workspace">全页工作区</button>
+        </div>
+        <label>岗位<select id="job-select"></select></label>
+        <label>候选人<select id="candidate-select"></select></label>
+        <label>主题<select id="theme-select"><option value="energy">集团绿</option><option value="neutral">中性灰</option><option value="classic">经典蓝</option></select></label>
+        <button class="toolbar-action" id="renew-session">续期会话</button>
+        <span class="connection-state" id="connection-state"><i></i>等待连接</span>
+      </section>
+
+      <div class="ats-body">
+        <aside class="ats-sidebar">
+          <div class="ats-sidebar-title">招聘管理</div>
+          <button class="active">招聘职位</button>
+          <button>候选人管理</button>
+          <button>面试管理</button>
+          <button>Offer 管理</button>
+          <button>招聘审批</button>
+          <span>配置中心</span>
+          <button>招聘渠道</button>
+          <button>消息模板</button>
+        </aside>
+
+        <main class="ats-content" id="ats-content">
+          <div class="ats-breadcrumb">招聘管理 / 招聘职位 / <span id="breadcrumb-role">高级后端开发工程师</span></div>
+          <div class="ats-page-head">
+            <div><h1 id="ats-role-title">高级后端开发工程师</h1><p><span id="ats-job-code">R2026-0718</span> · <span id="ats-department">数字科技部</span> · 北京</p></div>
+            <div><span class="status">招聘中</span><button class="primary-action">编辑职位</button></div>
+          </div>
+          <div class="ats-tabs"><button class="active">职位概览</button><button>候选人 <em>18</em></button><button>面试安排</button><button>操作记录</button></div>
+          <section class="ats-summary">
+            <div><small>招聘人数</small><strong>2</strong><span>已入职 0</span></div>
+            <div><small>流程中候选人</small><strong>12</strong><span>本周新增 4</span></div>
+            <div><small>待处理</small><strong>3</strong><span>待确认推荐名单</span></div>
+            <div><small>招聘负责人</small><strong class="owner">李佳</strong><span>集团人力资源部</span></div>
+          </section>
+          <section class="ats-panel">
+            <div class="ats-panel-head"><div><h2>候选人进展</h2><p>当前职位各阶段候选人</p></div><button>查看全部</button></div>
+            <table>
+              <thead><tr><th>候选人</th><th>当前阶段</th><th>匹配度</th><th>最近动态</th><th>负责人</th></tr></thead>
+              <tbody id="candidate-table"></tbody>
+            </table>
+          </section>
+          <section class="ats-panel muted-panel">
+            <div class="ats-panel-head"><div><h2>职位信息</h2><p>来自 ATS 的岗位主数据</p></div></div>
+            <div class="job-facts"><span><small>招聘类型</small>社会招聘</span><span><small>工作地点</small>北京</span><span><small>紧急程度</small>高</span><span><small>计划完成</small>2026-08-15</span></div>
+          </section>
+        </main>
+
+        <section class="plugin-region" id="plugin-region" aria-label="知聘招聘智能体插件">
+          <header><div><span>知聘招聘智能体</span><small id="surface-label">岗位侧栏</small></div><span id="last-event">正在建立协议会话</span></header>
+          <div id="smartai-container" class="smartai-container"></div>
+        </section>
+      </div>
+      <div class="host-toast" id="host-toast" role="status"></div>
+    </div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
