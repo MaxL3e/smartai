@@ -8,6 +8,7 @@
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 button, select { color: inherit; font: inherit; }
 button { cursor: pointer; }
+button:disabled { cursor: default; }
 
 .ats-shell { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: #f4f6f7; }
 .ats-topbar { height: 54px; display: grid; flex: 0 0 auto; grid-template-columns: 270px minmax(0,1fr) auto; align-items: center; padding: 0 18px; color: #fff; background: #163b4b; }
@@ -23,6 +24,7 @@ button { cursor: pointer; }
 .ats-user i { width: 28px; height: 28px; display: grid; place-items: center; color: #173b49; font-style: normal; font-weight: 700; background: #dbe7e8; border-radius: 50%; }
 
 .integration-toolbar { min-height: 48px; display: flex; flex: 0 0 auto; align-items: center; gap: 10px; padding: 7px 14px; background: #fff; border-bottom: 1px solid #d9e0e2; }
+.integration-label { color: #284957; font-size: 10px; white-space: nowrap; }
 .scene-switch { display: inline-flex; padding: 2px; background: #edf1f2; border-radius: 5px; }
 .scene-switch button { min-height: 28px; padding: 4px 10px; color: #62727b; font-size: 10px; background: transparent; border: 0; border-radius: 4px; }
 .scene-switch button.active { color: #173f4f; font-weight: 700; background: #fff; box-shadow: 0 1px 4px rgba(20,45,55,.12); }
@@ -30,6 +32,7 @@ button { cursor: pointer; }
 .integration-toolbar label.disabled { opacity: .45; }
 .integration-toolbar select { height: 30px; max-width: 190px; padding: 0 24px 0 7px; font-size: 10px; background: #fff; border: 1px solid #d5dde0; border-radius: 4px; }
 .toolbar-action { height: 30px; margin-left: auto; padding: 0 10px; color: #284957; font-size: 10px; font-weight: 600; background: #fff; border: 1px solid #cbd5d8; border-radius: 4px; }
+.product-link { min-height: 30px; display: inline-flex; align-items: center; padding: 0 10px; color: #fff; font-size: 10px; font-weight: 700; text-decoration: none; background: #173f4f; border-radius: 4px; white-space: nowrap; }
 .connection-state { min-width: 112px; display: flex; align-items: center; gap: 6px; color: #7a858b; font-size: 10px; }
 .connection-state i { width: 7px; height: 7px; background: #aeb8bc; border-radius: 50%; }
 .connection-state.connected { color: #277159; }
@@ -67,6 +70,7 @@ button { cursor: pointer; }
 .ats-panel-head h2 { margin: 0; font-size: 13px; }
 .ats-panel-head p { margin: 3px 0 0; color: #89949a; font-size: 9px; }
 .ats-panel-head button { color: #2a6e7e; font-size: 9px; background: transparent; border: 0; }
+.ats-topbar nav button:disabled, .ats-sidebar button:disabled, .ats-page-head button:disabled, .ats-tabs button:disabled, .ats-panel-head button:disabled { pointer-events: none; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 th { height: 32px; padding: 0 12px; text-align: left; color: #7b898f; font-size: 9px; font-weight: 600; background: #f7f9f9; }
 td { height: 48px; padding: 0 12px; color: #5c6c73; font-size: 9px; border-top: 1px solid #edf0f1; }
