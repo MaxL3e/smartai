@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:pages": "vite build --base=/smartai/",
+    "build:pages": "vite build --base=/smartai/ --outDir dist-pages",
     "contracts:check": "node scripts/validate-contracts.mjs",
     "docs:check": "node scripts/validate-docs.mjs",
+    "test:agent": "node scripts/test-recruitment-agent.mjs && node scripts/test-task-modal.mjs",
     "test:embed": "node scripts/test-embed-sdk.mjs",
     "preview": "vite preview"
   },

@@ -1,0 +1,42 @@
+name: Backend Quality
+
+on:
+  push:
+    branches:
+      - test
+    paths:
+      - apps/core-api/**
+      - .github/workflows/backend-quality.yml
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/core-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: apps/core-api/pom.xml
+
+      - name: Run backend tests
+        run: bash mvnw -B clean test --no-transfer-progress

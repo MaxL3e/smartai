@@ -44,8 +44,8 @@
 apps/
   web/                  React + TypeScript 共享业务模块与三种 Shell
   host-harness/         无后端认证的 ATS 宿主协议模拟与嵌入 E2E 测试壳
+  core-api/             Java 21/Spring Boot 4.0.x/Spring Modulith 2.0 Core API 地基
 services/
-  core-api/             Spring Boot 招聘业务核心与集成层
   ai-service/           FastAPI 模型、检索、解析与评价服务
 packages/
   embed-sdk/            iframe 生命周期、会话、上下文和宿主消息协议
@@ -56,4 +56,8 @@ deploy/                 本地编排、Kubernetes 与环境配置
 
 目录迁移应分阶段进行。当前 `src/` 前端继续作为可运行基线，在 API 契约和模块边界稳定前不做一次性重写。
 
-当前仓库已先落地 `apps/host-harness/`、`packages/embed-sdk/` 和 `packages/contracts/`。提交前运行 `npm run contracts:check` 与 `npm run test:embed`，确保接口引用、operationId 和宿主消息安全约束未回退。
+当前仓库已落地 `apps/host-harness/`、`packages/embed-sdk/`、`packages/contracts/` 和 `apps/core-api/`。Core API 已完成 G1“需求草案 -> 人工确认 -> 招聘任务”、G2“岗位方案 -> 版本修改 -> 人工批准”和 G3“候选输入 -> 标准化简历 -> 硬过滤 -> 固定评分与证据”三个纵向切片，前端已调用这些服务。G2/G3 当前使用不调用 LLM/RAG 的确定性引擎；候选名单确认、面试、评价、知识检索、真实认证和 PostgreSQL 生产实例仍未完成。
+
+提交前运行 `npm run test:agent`、`npm run contracts:check` 与 `npm run test:embed`。Core API 使用显式 `local` profile 启动并以干净构建验证：Windows 执行 `cd apps/core-api` 后运行 `.\mvnw.cmd clean test`，Linux/macOS 运行 `./mvnw clean test`；启动命令分别为 `.\mvnw.cmd -Dspring-boot.run.profiles=local spring-boot:run` 和 `./mvnw -Dspring-boot.run.profiles=local spring-boot:run`。
+
+`production` profile 不得继承本地数据库兜底。缺少 `SMARTAI_DATABASE_URL`、运行时账号 `SMARTAI_DATABASE_RUNTIME_USERNAME/PASSWORD` 或迁移账号 `SMARTAI_DATABASE_MIGRATION_USERNAME/PASSWORD` 时必须启动失败，不能据此宣称已连接 PostgreSQL 生产环境。

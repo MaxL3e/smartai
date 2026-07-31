@@ -1,0 +1,33 @@
+spring:
+  config:
+    activate:
+      on-profile: production
+  datasource:
+    url: ${SMARTAI_DATABASE_URL}
+    username: ${SMARTAI_DATABASE_RUNTIME_USERNAME}
+    password: ${SMARTAI_DATABASE_RUNTIME_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${SMARTAI_DATABASE_POOL_SIZE:20}
+      minimum-idle: ${SMARTAI_DATABASE_MIN_IDLE:2}
+      connection-timeout: 30000
+      validation-timeout: 5000
+  flyway:
+    locations: classpath:db/migration/common,classpath:db/migration/postgresql
+    user: ${SMARTAI_DATABASE_MIGRATION_USERNAME}
+    password: ${SMARTAI_DATABASE_MIGRATION_PASSWORD}
+
+management:
+  server:
+    port: ${SMARTAI_MANAGEMENT_PORT:9091}
+  endpoints:
+    web:
+      exposure:
+        include: health
+  health:
+    rabbit:
+      enabled: true
+
+smartai:
+  requirement-drafts:
+    encryption-key: ${SMARTAI_REQUIREMENT_DRAFT_ENCRYPTION_KEY}

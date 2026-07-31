@@ -61,6 +61,23 @@ import {
   sanitizeHostContext,
   validateHostContext,
 } from '../packages/embed-sdk/src/index.js';
+import {
+  DEMO_CANDIDATE_CONNECTOR_ID,
+  convertRequirementDraft,
+  createMatchRun,
+  decideHumanCheckpoint,
+  generatePositionPlan,
+  getCurrentPositionPlan,
+  getRequirementDraft,
+  listMatchResults,
+  mapPositionPlanResponse,
+  mapRecruitmentTaskResponse,
+  mapRequirementDraftResponse,
+  requestPositionPlanReview,
+  resolveRequirementDraft,
+  submitCandidateInput,
+  updatePositionPlan,
+} from './services/recruitmentAgent.js';
 
 const navItems = [
   { id: 'workspace', label: '智能体工作台', icon: LayoutDashboard },
@@ -265,6 +282,28 @@ function loadStored(key, fallback) {
   }
 }
 
+function normalizeStoredTasks(value) {
+  if (!Array.isArray(value)) return initialTasks;
+  return value.map((task) => {
+    const isServiceTask = task.creationMode === 'service' || Boolean(task.serviceTask);
+    if (!isServiceTask) return task;
+    if (!task.servicePlan?.id) {
+      return { ...task, stage: '岗位方案', progress: 12, tone: 'green', planConfirmed: false };
+    }
+    const planApproved = task.planConfirmed || task.servicePlan.status === 'APPROVED';
+    if (!planApproved) {
+      return { ...task, stage: '岗位方案', progress: 12, tone: 'green', planConfirmed: false };
+    }
+    if (!task.serviceMatchRun) {
+      return { ...task, stage: '人才搜索', progress: 30, tone: 'blue', planConfirmed: true };
+    }
+    if (!Array.isArray(task.serviceMatchResults) || task.serviceMatchResults.length === 0) {
+      return { ...task, stage: '人才搜索', progress: 30, tone: 'amber', planConfirmed: true };
+    }
+    return task;
+  });
+}
+
 function downloadText(filename, content, type = 'text/plain;charset=utf-8') {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -448,6 +487,9 @@ function getRolePlan(task) {
 }
 
 function getCandidates(task) {
+  if (Array.isArray(task?.serviceMatchResults)) {
+    return task.serviceMatchResults;
+  }
   const role = task?.role || '';
   const plan = getRolePlan(task);
   const isTechnicalRole = role.includes('后端') || role.includes('Java');
@@ -481,6 +523,78 @@ function getCandidates(task) {
   });
 }
 
+function buildDemoCandidateInput(person, index, task) {
+  const sourceVersion = `demo-${task.servicePlan?.contentHash?.slice(0, 16) || 'position-plan-v1'}`;
+  const evidenceText = person.evidence.map((item) => `${item.label}：${item.quote}`).join('\n');
+  return {
+    connectorId: DEMO_CANDIDATE_CONNECTOR_ID,
+    sourceType: 'TALENT_POOL',
+    sourceSystem: 'smartai.demo',
+    externalCandidateId: `candidate-${person.id}`,
+    sourceVersion,
+    candidateNo: `DEMO-${String(index + 1).padStart(3, '0')}`,
+    displayName: person.name,
+    consentStatus: 'GRANTED',
+    sections: [
+      { code: 'SUMMARY', text: `${person.title}，${person.years}工作经验。${person.highlights.join('，')}。` },
+      { code: 'EXPERIENCE', text: evidenceText },
+      { code: 'SKILLS', text: person.highlights.join('，') },
+      { code: 'EDUCATION', text: `${person.education}，${person.school}` },
+      { code: 'LOCATION', text: task.city },
+      { code: 'PROJECT', text: evidenceText },
+    ],
+    facts: {
+      location: task.city,
+      experienceYears: Number.parseInt(person.years, 10) || 0,
+      educationLevel: person.education,
+      skills: person.highlights,
+    },
+    sourceApplicationRef: {
+      system: 'smartai.demo',
+      id: `${task.code}-${person.id}`,
+      objectType: 'Application',
+      version: sourceVersion,
+    },
+    sourceUpdatedAt: new Date().toISOString(),
+  };
+}
+
+function mapServiceMatchResults(envelope, fixtures, task) {
+  const results = envelope?.data || [];
+  const rulesByCode = new Map((task.planScoreRules || []).map((rule) => [rule.code, rule]));
+  return results.map((result, index) => {
+    const fixture = fixtures.find((person) => person.name === result.candidate.displayName) || fixtures[index] || candidatesSeed[0];
+    const recommendation = recommendationForScore(Number(result.totalScore), task.planThresholds || defaultPlanThresholds);
+    const evidence = result.criterionScores.map((criterion) => {
+      const rule = rulesByCode.get(criterion.criterionCode);
+      return {
+        label: rule?.label || criterion.criterionCode,
+        value: Number(criterion.weightedScore),
+        max: Number(rule?.weight || 100 / Math.max(1, result.criterionScores.length)),
+        quote: criterion.evidenceRefs?.[0]?.quote || criterion.explanation || '该维度暂无可定位证据',
+      };
+    });
+    const supported = result.criterionScores
+      .filter((criterion) => criterion.evidenceRefs?.length)
+      .map((criterion) => rulesByCode.get(criterion.criterionCode)?.label || criterion.criterionCode)
+      .slice(0, 3);
+    return {
+      ...fixture,
+      id: result.taskCandidateRef.id,
+      name: result.candidate.displayName,
+      initials: result.candidate.displayName.slice(0, 1),
+      score: Math.round(Number(result.totalScore)),
+      status: result.hardFilterResult?.passed === false ? '硬条件不符' : recommendation.status,
+      tone: result.hardFilterResult?.passed === false ? 'gray' : recommendation.tone,
+      highlights: supported.length ? supported : fixture.highlights,
+      risks: result.needsVerification?.length ? result.needsVerification : ['无待核实项'],
+      evidence,
+      serviceMatchResult: result,
+      serverCalculated: true,
+    };
+  });
+}
+
 function recommendationForScore(score, thresholds = defaultPlanThresholds) {
   if (score >= thresholds.strong) return { status: '强烈推荐', tone: 'green' };
   if (score >= thresholds.recommended) return { status: '推荐', tone: 'blue' };
@@ -489,6 +603,7 @@ function recommendationForScore(score, thresholds = defaultPlanThresholds) {
 }
 
 function applyMatchStrategy(person, strategy, thresholds) {
+  if (person.serverCalculated) return person;
   const score = person.evidence.reduce((total, item) => {
     const weight = strategy?.[item.label] ?? item.max;
     return total + (item.value / item.max) * weight;
@@ -591,12 +706,13 @@ function EmbedSidebar({ activeTask, candidatePool, flowStep, selectedCandidates,
   );
 }
 
-function EmbedGate({ status }) {
+function EmbedGate({ status, onOpenStandalone }) {
   return (
     <div className="embed-gate" role="status">
       <span><RefreshCw size={20} /></span>
       <strong>{status}</strong>
-      <p>完成会话认证和资源映射后才会显示招聘业务数据。</p>
+      <p>{status === '嵌入预览' ? '当前页面没有 ATS 宿主会话。请从 ATS 打开，或进入独立智能体工作区。' : '完成会话认证和资源映射后才会显示招聘业务数据。'}</p>
+      {status === '嵌入预览' && <button type="button" className="btn primary" onClick={onOpenStandalone}><ExternalLink size={16} />进入独立智能体</button>}
     </div>
   );
 }
@@ -608,7 +724,7 @@ function App() {
   const [selectedCandidate, setSelectedCandidate] = useState(() => loadAppState('smartai.selectedCandidate', 1));
   const [knowledge, setKnowledge] = useState(() => loadAppState('smartai.knowledge', knowledgeSeed));
   const [events, setEvents] = useState(() => loadAppState('smartai.events', initialEvents));
-  const [tasks, setTasks] = useState(() => loadAppState('smartai.recruitmentTasks', initialTasks));
+  const [tasks, setTasks] = useState(() => normalizeStoredTasks(loadAppState('smartai.recruitmentTasks', initialTasks)));
   const [activeTaskId, setActiveTaskId] = useState(() => loadAppState('smartai.activeTaskId', initialTasks[0].code));
   const [candidateSelections, setCandidateSelections] = useState(() => {
     const stored = loadAppState('smartai.selectedCandidates', {});
@@ -642,6 +758,7 @@ function App() {
   const embedNoncesRef = useRef(new Set());
   const embedAccessTokenRef = useRef(null);
   const embedHostContextRef = useRef(null);
+  const embedHostContextHashRef = useRef(null);
   const embedAuthModeRef = useRef('idle');
   const embedLifecycleRef = useRef(embedLifecycleStates.idle);
   const embedCapabilitiesRef = useRef([]);
@@ -737,6 +854,7 @@ function App() {
       embedOperationAbortRef.current = null;
       embedAccessTokenRef.current = null;
       embedHostContextRef.current = null;
+      embedHostContextHashRef.current = null;
       embedContextEtagRef.current = null;
       embedCapabilitiesRef.current = [];
       embedHostCapabilitiesRef.current = [];
@@ -921,6 +1039,7 @@ function App() {
       embedAuthModeRef.current = auth.mode;
       embedCapabilitiesRef.current = capabilityResult.effective;
       embedAccessTokenRef.current = auth.accessToken;
+      embedHostContextHashRef.current = auth.mode === 'authenticated' ? auth.context.contextHash : null;
       embedContextEtagRef.current = auth.mode === 'authenticated' ? auth.contextEtag : null;
       embedLifecycleRef.current = embedLifecycleStates.ready;
       setEmbedStatus(auth.mode === 'demo' ? '协议模拟 / 本地映射' : '已认证');
@@ -1048,6 +1167,7 @@ function App() {
         const replacement = replacementEnvelope.data || replacementEnvelope;
         const nextEtag = resolveSessionEtag(replacementResponse, replacement.contextVersion, { requireHeader: true });
         const result = applyAuthorizedContext(replacement, 'authenticated');
+        embedHostContextHashRef.current = resolution.contextHash;
         embedContextEtagRef.current = nextEtag;
         embedLifecycleRef.current = embedLifecycleStates.ready;
         setEmbedStatus('已认证');
@@ -1237,6 +1357,19 @@ function App() {
     window.__smartToast = window.setTimeout(() => setToast(''), 2600);
   }
 
+  function openStandalone() {
+    window.location.assign(`${window.location.origin}${window.location.pathname}`);
+  }
+
+  function requestView(target) {
+    const requiredStep = { talent: 1, interviews: 3, evaluation: 4 }[target];
+    if (requiredStep != null && flowStep < requiredStep) {
+      notify(requiredStep === 1 ? '请先确认岗位方案' : requiredStep === 3 ? '请先完成候选名单确认' : '请先回收至少一份面试结果');
+      return;
+    }
+    setView(target);
+  }
+
   function sendEmbedMessage(type, payload = {}, replyTo = null) {
     if (!embedConfig.isEmbedded || window.parent === window || !embedConfig.parentOrigin) return null;
     embedSequenceRef.current += 1;
@@ -1352,8 +1485,8 @@ function App() {
     const datePart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const prefix = `R${datePart}-`;
     const sequence = String(Math.max(0, ...tasks.filter((task) => task.code.startsWith(prefix)).map((task) => Number(task.code.slice(prefix.length)) || 0)) + 1).padStart(2, '0');
-    const code = `R${datePart}-${sequence}`;
-    const due = form.due ? form.due.slice(5).replace('-', '-') : '待确定';
+    const code = form.code || `R${datePart}-${sequence}`;
+    const due = form.due ? (/^\d{4}-\d{2}-\d{2}$/.test(form.due) ? form.due.slice(5) : form.due) : '待确定';
     const task = {
       code,
       role: form.role.trim(),
@@ -1363,13 +1496,22 @@ function App() {
       headcount: Number(form.headcount),
       stage: '岗位方案',
       progress: 12,
-      owner: '李佳',
+      owner: form.owner || '李佳',
       due,
       tone: 'green',
       recruitmentType: form.recruitmentType,
       priority: form.priority,
       requirement: form.requirement.trim(),
       useKnowledge: form.useKnowledge,
+      creationMode: form.creationMode || 'local',
+      serviceTask: form.serviceTask,
+      servicePlan: form.servicePlan,
+      servicePlanError: form.servicePlanError,
+      planDuties: form.planDuties,
+      planRequirements: form.planRequirements,
+      planScoreRules: form.planScoreRules,
+      planThresholds: form.planThresholds,
+      planConfirmed: Boolean(form.planConfirmed),
     };
     setTasks((items) => [task, ...items]);
     setCandidateSelections((items) => ({ ...items, [code]: [] }));
@@ -1378,8 +1520,8 @@ function App() {
     setTaskModalOpen(false);
     setView('roleplan');
     pushEvent('创建招聘任务', `${task.role} · ${task.dept} · 招聘 ${task.count}`, 'human', code);
-    setNotifications((items) => [{ id: Date.now(), title: '岗位方案待确认', detail: `${task.role}的智能体建议稿已生成`, time: '刚刚', read: false, target: 'roleplan' }, ...items]);
-    notify(`招聘任务 ${code} 已创建`);
+    setNotifications((items) => [{ id: Date.now(), title: '岗位方案待确认', detail: task.creationMode === 'service' ? `${task.role}的智能体建议稿已生成` : `${task.role}已在本地体验中创建`, time: '刚刚', read: false, target: 'roleplan' }, ...items]);
+    notify(task.creationMode === 'service' ? `招聘任务 ${code} 已创建` : `本地体验任务 ${code} 已创建`);
   }
 
   function updateTask(code, changes) {
@@ -1446,6 +1588,7 @@ function App() {
     notify,
     pushEvent,
     advanceFlow,
+    getAccessToken: () => embedAccessTokenRef.current,
     setModalOpen,
     setTaskModalOpen,
     openDialog,
@@ -1453,21 +1596,21 @@ function App() {
 
   return (
     <div className={classNames('app-shell', embedConfig.isEmbedded ? 'shell-embed' : 'shell-standalone', embedConfig.isEmbedded && `surface-${embedConfig.surface}`)}>
-      {!embedConfig.isEmbedded && <Sidebar view={view} setView={setView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />}
+      {!embedConfig.isEmbedded && <Sidebar view={view} setView={requestView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />}
       <div className="app-column">
-        {!embedConfig.isEmbedded && <Topbar setView={setView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />}
-        {embedConfig.isEmbedded && <HostContextBar context={hostContext} activeTask={activeTask} candidate={candidate} status={embedStatus} surface={embedConfig.surface} onOpenWorkspace={() => requestHostNavigation('open_workspace')} onReturnToHost={() => requestHostNavigation('return_to_context')} />}
+        {!embedConfig.isEmbedded && <Topbar setView={requestView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />}
+        {embedConfig.isEmbedded && <HostContextBar context={hostContext} activeTask={activeTask} candidate={candidate} status={embedStatus} surface={embedConfig.surface} onOpenWorkspace={() => requestHostNavigation('open_workspace')} onReturnToHost={() => window.parent === window ? openStandalone() : requestHostNavigation('return_to_context')} />}
         <main className={classNames('main-content', `view-${view}`, embedConfig.surface === 'sidebar' && 'embed-sidebar-main')}>
           {embedConfig.isEmbedded && !hostContext
-            ? <EmbedGate status={embedStatus} />
+            ? <EmbedGate status={embedStatus} onOpenStandalone={openStandalone} />
             : embedConfig.isEmbedded && embedConfig.surface === 'sidebar'
             ? <EmbedSidebar {...context} onOpenWorkspace={() => requestHostNavigation('open_workspace')} />
             : <AppView view={view} context={context} />}
         </main>
       </div>
       {modalOpen && <KnowledgeModal onClose={() => setModalOpen(false)} onSubmit={addKnowledge} />}
-      {taskModalOpen && <TaskModal onClose={() => setTaskModalOpen(false)} onSubmit={createTask} />}
-      {globalSearchOpen && <GlobalSearch tasks={tasks} candidates={candidatePool} knowledge={knowledge} onClose={() => setGlobalSearchOpen(false)} onNavigate={(target, id) => { if (target === 'tasks' && id) { const task = tasks.find((item) => item.code === id); setActiveTaskId(id); setView(task?.stage === '岗位方案' ? 'roleplan' : 'workspace'); } else if (target === 'knowledge' && id) { const item = knowledge.find((entry) => entry.id === id); setView('knowledge'); if (item) setDialog({ type: 'knowledge', item }); } else { if (target === 'talent' && id) setSelectedCandidate(id); setView(target); } setGlobalSearchOpen(false); }} />}
+      {taskModalOpen && <TaskModal onClose={() => setTaskModalOpen(false)} onSubmit={createTask} getAccessToken={() => embedAccessTokenRef.current} sourceJobRef={hostContext?.jobRef || null} getHostContextHash={() => embedHostContextHashRef.current} />}
+      {globalSearchOpen && <GlobalSearch tasks={tasks} candidates={candidatePool} knowledge={knowledge} onClose={() => setGlobalSearchOpen(false)} onNavigate={(target, id) => { if (target === 'tasks' && id) { const task = tasks.find((item) => item.code === id); setActiveTaskId(id); setView(task?.stage === '岗位方案' ? 'roleplan' : 'workspace'); } else if (target === 'knowledge' && id) { const item = knowledge.find((entry) => entry.id === id); requestView('knowledge'); if (item) setDialog({ type: 'knowledge', item }); } else { if (target === 'talent' && id) setSelectedCandidate(id); requestView(target); } setGlobalSearchOpen(false); }} />}
       {dialog && <DetailDialog dialog={dialog} onClose={() => setDialog(null)} context={context} />}
       {toast && (
         <div className="toast" role="status">
@@ -1573,15 +1716,23 @@ function Topbar({ setView, notifications, notificationOpen, setNotificationOpen,
 }
 
 function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCandidate, setView, advanceFlow, events, activeTask, updateActiveTask, notify, pushEvent }) {
-  const stageMessage = {
+  const serviceTask = activeTask.creationMode === 'service';
+  const matchingServicePending = serviceTask && !activeTask.serviceMatchRun;
+  const serviceMatchEmpty = serviceTask && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
+  const serviceNeedsMatch = matchingServicePending || serviceMatchEmpty;
+  const matchMetrics = activeTask.serviceMatchRun?.metrics;
+  const strongMatches = candidatePool.filter((person) => person.status === '强烈推荐').length;
+  const stageMessage = serviceNeedsMatch && activeTask.stage === '人才搜索'
+    ? serviceMatchEmpty ? '上次 G3 未检索到候选人，可以重新运行' : 'G1/G2 已完成，可以运行 G3 候选匹配'
+    : ({
     岗位方案: '正在等待人工确认岗位方案',
     人才搜索: '正在检索集团人才库并生成匹配排序',
     名单确认: '正在等待人工确认候选名单',
     在线面试: '正在跟踪候选人在线面试状态',
     综合评价: '正在等待人工确认综合评价',
     已完成: '任务已完成，等待招聘结果回流',
-  }[activeTask.stage];
-  const taskEvents = events.filter((event) => event.taskId === activeTask.code);
+  }[activeTask.stage]);
+  const taskEvents = events.filter((event) => event.taskId === activeTask.code && !(serviceTask && /人才库检索|人才搜索已完成/.test(event.title)));
   const activityFeed = taskEvents.slice(0, 3);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [activityCursor, setActivityCursor] = useState(0);
@@ -1598,20 +1749,22 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
     return () => window.clearInterval(timer);
   }, [activeTask.code, activityFeed.length]);
   useEffect(() => {
-    if (activeTask.stage !== '人才搜索') return undefined;
+    if (activeTask.stage !== '人才搜索' || serviceTask) return undefined;
     const timer = window.setTimeout(() => {
       updateActiveTask({ stage: '名单确认', progress: 48, tone: 'blue' });
       pushEvent('完成人才库检索', `在 2,846 份简历中为${activeTask.role}筛选出 12 位候选人`, 'success');
       notify('人才搜索已完成，等待确认候选名单');
     }, 1400);
     return () => window.clearTimeout(timer);
-  }, [activeTask.code, activeTask.stage]);
+  }, [activeTask.code, activeTask.stage, serviceTask]);
   const currentActivity = activityFeed[activityCursor % Math.max(activityFeed.length, 1)];
   const elapsedSeconds = 8 * 60 + 42 + liveSeconds;
   const elapsedLabel = `${Math.floor(elapsedSeconds / 60)} 分 ${String(elapsedSeconds % 60).padStart(2, '0')} 秒`;
   const primaryAction = {
     岗位方案: { label: '审核岗位方案', action: () => setView('roleplan') },
-    人才搜索: { label: '运行人才搜索', action: advanceFlow },
+    人才搜索: serviceNeedsMatch
+      ? { label: serviceMatchEmpty ? '重新运行人才匹配' : '运行人才匹配', action: () => setView('talent') }
+      : { label: '运行人才搜索', action: advanceFlow },
     名单确认: { label: '确认候选名单', action: () => setView('talent') },
     在线面试: { label: '查看面试进度', action: () => setView('interviews') },
     综合评价: { label: '查看综合评价', action: () => setView('evaluation') },
@@ -1643,11 +1796,14 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           {flowSteps.map((step, index) => {
             const completed = index < flowStep;
             const active = index === flowStep;
+            const stepNote = matchingServicePending && index === 1
+              ? '等待匹配服务'
+              : completed ? step.completedNote : active ? step.activeNote : step.pendingNote;
             return (
-              <button type="button" aria-current={active ? 'step' : undefined} aria-label={`${step.title}，${completed ? step.completedNote : active ? step.activeNote : step.pendingNote}`} className={classNames('flow-step', completed && 'completed', active && 'current')} key={step.title} onClick={() => { if (index === 0) setView('roleplan'); if (index === 1 || index === 2) setView('talent'); if (index === 3) setView('interviews'); if (index === 4) setView('evaluation'); }}>
+              <button type="button" disabled={index > flowStep} aria-current={active ? 'step' : undefined} aria-label={`${step.title}，${stepNote}`} className={classNames('flow-step', completed && 'completed', active && 'current')} key={step.title} onClick={() => { if (index === 0) setView('roleplan'); if (index === 1 || index === 2) setView('talent'); if (index === 3) setView('interviews'); if (index === 4) setView('evaluation'); }}>
                 <div className="step-line" />
                 <span className="step-dot">{completed ? <Check size={14} /> : index + 1}</span>
-                <div><strong>{step.title}</strong><small>{completed ? step.completedNote : active ? step.activeNote : step.pendingNote}</small></div>
+                <div><strong>{step.title}</strong><small>{stepNote}</small></div>
               </button>
             );
           })}
@@ -1659,19 +1815,19 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           {flowStep < 2 ? (
             <div className="workspace-gate">
               <span className={classNames('workspace-gate-icon', flowStep === 1 && 'searching')}>{flowStep === 0 ? <FileText size={26} /> : <Search size={26} />}</span>
-              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : '正在检索集团人才库'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : `正在应用“${activeTask.role}评分卡”提取简历证据并生成可解释排序。`}</p></div>
-              <div className="workspace-gate-meta"><span><ShieldCheck size={15} />知识与规则已校验</span><span><History size={15} />全过程记录审计日志</span></div>
-              {flowStep === 0 ? <button className="btn primary" onClick={() => setView('roleplan')}>审核岗位方案 <ArrowRight size={17} /></button> : <button className="btn secondary" onClick={() => setView('audit')}>查看实时记录 <Activity size={16} /></button>}
+              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : serviceNeedsMatch ? 'G3 服务端能力' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : serviceMatchEmpty ? '上次匹配没有结果' : serviceNeedsMatch ? '候选匹配已就绪' : '人才匹配已完成'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : serviceMatchEmpty ? '上次运行扫描数为 0，任务不会自动推进。请重新导入演示样本并运行 G3。' : serviceNeedsMatch ? '可先用虚构候选样本验证标准化输入、硬条件过滤、固定评分和证据解释；接入 ATS 时仅替换候选输入适配器。' : `已应用“${activeTask.role}评分卡”完成固定评分和证据映射。`}</p></div>
+              <div className="workspace-gate-meta"><span><ShieldCheck size={15} />{serviceNeedsMatch ? 'G1/G2 已服务端确认' : '岗位方案与规则版本已绑定'}</span><span><History size={15} />{serviceMatchEmpty ? '保留上次空结果运行记录' : serviceNeedsMatch ? '等待运行演示输入适配器' : 'G3 结果已写入运行审计'}</span></div>
+              {flowStep === 0 ? <button className="btn primary" onClick={() => setView('roleplan')}>审核岗位方案 <ArrowRight size={17} /></button> : serviceNeedsMatch ? <button className="btn primary" onClick={() => setView('talent')}>{serviceMatchEmpty ? '重新运行 G3' : '运行 G3 匹配'} <ArrowRight size={16} /></button> : <button className="btn secondary" onClick={() => setView('audit')}>查看运行记录 <Activity size={16} /></button>}
             </div>
           ) : <>
           <div className="panel-heading">
             <div><span className="section-kicker">本轮产出</span><h2>人才匹配结果</h2></div>
-            <button className="text-button" onClick={() => setView('talent')}>查看全部 12 人 <ArrowRight size={15} /></button>
+            <button className="text-button" onClick={() => setView('talent')}>查看全部 {candidatePool.length} 人 <ArrowRight size={15} /></button>
           </div>
           <div className="metric-strip">
-            <div><span>人才库检索</span><strong>2,846</strong><small>份有效简历</small></div>
-            <div><span>进入推荐</span><strong>12</strong><small>匹配度 ≥ 70</small></div>
-            <div><span>强推荐</span><strong>3</strong><small>匹配度 ≥ 88</small></div>
+            <div><span>本轮扫描</span><strong>{matchMetrics?.scanned ?? '2,846'}</strong><small>份候选输入</small></div>
+            <div><span>完成评分</span><strong>{matchMetrics?.scored ?? candidatePool.length}</strong><small>固定规则计算</small></div>
+            <div><span>强推荐</span><strong>{activeTask.serviceMatchRun ? strongMatches : 3}</strong><small>达到岗位阈值</small></div>
             <div><span>已选择</span><strong>{selectedCandidates.length}</strong><small>等待确认</small></div>
           </div>
           <div className="candidate-preview-list">
@@ -1700,19 +1856,19 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           </div>
           <div className="agent-identity">
             <span className="agent-orbit"><Bot size={25} /></span>
-            <div><strong>招聘执行智能体</strong><small><i />在线 · 受控执行 · 实时同步</small></div>
+            <div><strong>招聘执行智能体</strong><small><i />{serviceNeedsMatch ? '就绪 · 受控执行 · 等待匹配服务' : '在线 · 受控执行 · 实时同步'}</small></div>
           </div>
           <div className="activity-now" aria-live="polite">
-            <div className="activity-now-head"><span><i />实时处理</span><em>LIVE</em></div>
+            <div className="activity-now-head"><span><i />{serviceNeedsMatch ? '当前状态' : '实时处理'}</span><em>{serviceNeedsMatch ? 'WAIT' : 'LIVE'}</em></div>
             <strong>{stageMessage}</strong>
             <p key={currentActivity?.id || activeTask.stage}>{currentActivity ? `最近节点：${currentActivity.title}` : '等待当前任务产生新的执行记录'}</p>
-            <div className="activity-signal" aria-hidden="true">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <i key={item} />)}</div>
+            {!serviceNeedsMatch && <div className="activity-signal" aria-hidden="true">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <i key={item} />)}</div>}
           </div>
           <div className="event-list compact">
             {activityFeed.map((event, index) => (
               <div className={classNames('event-item', index === activityCursor && 'active')} key={`${event.time}-${index}`}>
                 <span className={classNames('event-mark', event.type)}>{event.type === 'human' ? <UserCheck size={13} /> : <Check size={13} />}</span>
-                <div><strong>{event.title}</strong><p>{event.detail}</p><time>{index === activityCursor ? '正在同步' : event.time}</time></div>
+                <div><strong>{event.title}</strong><p>{event.detail}</p><time>{index === activityCursor && !serviceNeedsMatch ? '正在同步' : event.time}</time></div>
               </div>
             ))}
             {!activityFeed.length && <div className="activity-empty"><Clock3 size={15} />等待新的任务动态</div>}
@@ -1725,13 +1881,62 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
   );
 }
 
-function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, knowledge, openDialog }) {
+function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, knowledge, openDialog, getAccessToken }) {
   const generatedPlan = useMemo(() => getRolePlan(activeTask), [activeTask]);
   const [editing, setEditing] = useState(false);
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planError, setPlanError] = useState('');
   const [summary, setSummary] = useState(activeTask?.requirement || '负责核心业务工作，持续提升组织效能与业务支撑能力。');
   const [requirements, setRequirements] = useState(activeTask?.planRequirements || generatedPlan.requirements);
+  const planOperationKeysRef = useRef(new Map());
   const scoreRules = generatedPlan.scoreRules;
   const thresholds = generatedPlan.thresholds;
+  const serviceKnowledgeRefs = activeTask?.servicePlan?.knowledgeVersionRefs || [];
+  const planLocked = activeTask?.servicePlan?.status === 'APPROVED';
+  const planMode = planLocked
+    ? 'service-approved'
+    : serviceKnowledgeRefs.length
+    ? 'service-knowledge'
+    : activeTask?.servicePlan
+      ? 'service-rules'
+      : activeTask?.creationMode === 'service'
+        ? 'service-task-only'
+        : 'local';
+  const planPresentation = {
+    'service-approved': {
+      title: '岗位方案已由招聘负责人批准',
+      detail: '当前版本已经冻结并进入人才搜索；如需修改，应创建新的方案修订版本',
+      label: '已批准只读',
+      tone: 'green',
+    },
+    'service-knowledge': {
+      title: '岗位方案由智能体服务生成',
+      detail: `已绑定 ${serviceKnowledgeRefs.length} 个企业知识版本，确认前请核对正文和引用`,
+      label: '待人工确认',
+      tone: 'green',
+    },
+    'service-rules': {
+      title: '岗位方案由服务端规则生成器生成',
+      detail: '已写入智能体服务，但未调用大模型或企业知识检索',
+      label: '规则生成',
+      tone: 'blue',
+    },
+    'service-task-only': {
+      title: '招聘任务已写入智能体服务',
+      detail: '当前显示本地岗位方案预览，服务端岗位方案尚未生成',
+      label: '待生成',
+      tone: 'amber',
+    },
+    local: {
+      title: '岗位方案由本地体验生成',
+      detail: '未写入智能体服务，可继续体验岗位方案确认流程',
+      label: '本地体验',
+      tone: 'amber',
+    },
+  }[planMode];
+  const localKnowledgeSources = planMode === 'local'
+    ? generatedPlan.sourceIds.map((id) => knowledge.find((item) => item.id === id && !item.archived)).filter(Boolean)
+    : [];
 
   useEffect(() => {
     setEditing(false);
@@ -1739,12 +1944,99 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
     setRequirements(activeTask?.planRequirements || generatedPlan.requirements);
   }, [activeTask?.code, activeTask?.requirement, activeTask?.planRequirements, generatedPlan]);
 
-  function savePlan() {
+  function cancelEditing() {
+    setSummary(activeTask?.requirement || '负责核心业务工作，持续提升组织效能与业务支撑能力。');
+    setRequirements(activeTask?.planRequirements || generatedPlan.requirements);
     setEditing(false);
-    updateActiveTask({ requirement: summary, planRequirements: requirements, planConfirmed: true, stage: activeTask.stage === '岗位方案' ? '人才搜索' : activeTask.stage, progress: activeTask.stage === '岗位方案' ? 30 : activeTask.progress });
-    pushEvent('人工确认岗位方案', '招聘经理确认 JD、任职标准与人才推荐评分卡', 'human');
-    notify('岗位方案已保存并确认');
-    setView('workspace');
+  }
+
+  function planOperationKey(identity) {
+    if (!planOperationKeysRef.current.has(identity)) {
+      planOperationKeysRef.current.set(identity, globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    }
+    return planOperationKeysRef.current.get(identity);
+  }
+
+  function serviceScorecard() {
+    const current = activeTask.servicePlan.scorecard;
+    const criteria = scoreRules.map((rule, index) => {
+      const previous = current.criteria.find((item) => item.code === rule.code) || current.criteria[index];
+      return {
+        code: rule.code || previous?.code || `CUSTOM_${index + 1}`,
+        name: rule.label,
+        weight: Number(rule.weight),
+        description: previous?.description || rule.detail,
+        evidenceRequirement: rule.detail,
+        scoringRule: previous?.scoringRule || { type: 'PRESENCE', parameters: { evidenceRequired: true }, calculationVersion: 'demo-rule-v1' },
+        required: previous?.required ?? true,
+        capScore: previous?.capScore ?? null,
+        displayOrder: index + 1,
+      };
+    });
+    return {
+      ...current,
+      criteria,
+      thresholds: [
+        { level: 'NOT_RECOMMENDED', minimum: 0, maximum: thresholds.review },
+        { level: 'REVIEW', minimum: thresholds.review, maximum: thresholds.recommended },
+        { level: 'RECOMMENDED', minimum: thresholds.recommended, maximum: thresholds.strong },
+        { level: 'STRONGLY_RECOMMENDED', minimum: thresholds.strong, maximum: 100 },
+      ],
+    };
+  }
+
+  async function savePlan() {
+    if (planLocked) {
+      notify('已批准方案为只读版本，如需调整请创建修订版本');
+      return;
+    }
+    setEditing(false);
+    setPlanError('');
+    if (!activeTask.servicePlan?.id) {
+      const serviceTaskOnly = activeTask.creationMode === 'service';
+      updateActiveTask({ requirement: summary, planRequirements: requirements, planConfirmed: true, planConfirmationMode: serviceTaskOnly ? 'local-preview' : 'local', stage: activeTask.stage === '岗位方案' ? '人才搜索' : activeTask.stage, progress: activeTask.stage === '岗位方案' ? 30 : activeTask.progress });
+      pushEvent(serviceTaskOnly ? '保存岗位方案本地预览' : '人工确认岗位方案', serviceTaskOnly ? '当前修改仅保存在浏览器，服务端 G2 岗位方案尚未生成' : '招聘经理确认 JD、任职标准与人才推荐评分卡', 'human');
+      notify(serviceTaskOnly ? '本地预览已保存，尚未写入岗位方案服务' : '岗位方案已保存并确认');
+      setView('workspace');
+      return;
+    }
+
+    setPlanSaving(true);
+    try {
+      const accessToken = getAccessToken?.();
+      const planId = activeTask.servicePlan.id;
+      const patchedEnvelope = await updatePositionPlan(activeTask, {
+        jobDescription: summary,
+        responsibilities: generatedPlan.duties,
+        requirements,
+        scorecard: serviceScorecard(),
+        changeSummary: '招聘负责人核对并提交岗位方案、任职要求和评分卡',
+      }, {
+        accessToken,
+        idempotencyKey: planOperationKey(`patch:${planId}:${activeTask.servicePlan.version}`),
+      });
+      const patchedTask = mapPositionPlanResponse(patchedEnvelope, activeTask);
+      const reviewEnvelope = await requestPositionPlanReview(patchedTask, {
+        accessToken,
+        idempotencyKey: planOperationKey(`review:${planId}:${patchedTask.servicePlan.version}`),
+      });
+      const checkpoint = reviewEnvelope.data || reviewEnvelope;
+      await decideHumanCheckpoint(checkpoint, {
+        accessToken,
+        idempotencyKey: planOperationKey(`approve:${checkpoint.id}:${checkpoint.version}`),
+      });
+      const approvedEnvelope = await getCurrentPositionPlan(activeTask, { accessToken });
+      const approvedTask = mapPositionPlanResponse(approvedEnvelope, patchedTask);
+      updateActiveTask({ ...approvedTask, planConfirmationMode: 'service' });
+      pushEvent('G2 岗位方案已批准', '招聘负责人已确认服务端岗位方案、评分卡和推荐阈值', 'human');
+      notify('岗位方案已写入智能体服务并通过 G2 确认');
+      setView('workspace');
+    } catch (error) {
+      setPlanError(error.message || '岗位方案确认失败，请重试');
+      notify('岗位方案尚未确认，请检查后重试');
+    } finally {
+      setPlanSaving(false);
+    }
   }
 
   return (
@@ -1752,13 +2044,16 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
       <PageHeader
         eyebrow={`招聘任务 ${activeTask?.code || 'R2026-0718'} / 岗位方案`}
         title={activeTask?.role || '高级后端开发工程师'}
-        description={`${activeTask?.dept || '数字科技部'} · ${activeTask?.city || '北京'} · 招聘 ${activeTask?.count || '2人'} · 智能体生成方案待审核`}
-        actions={<><button className="btn secondary" onClick={() => setEditing((value) => !value)}>{editing ? <X size={16} /> : <FileText size={16} />}{editing ? '取消编辑' : '编辑JD'}</button><button className="btn secondary" onClick={() => openDialog('task-edit', { task: activeTask })}><Settings2 size={16} />任务设置</button><button className="btn primary" onClick={savePlan}><CheckCircle2 size={17} />{activeTask.planConfirmed ? '保存岗位方案' : '确认岗位方案'}</button></>}
+        description={`${activeTask?.dept || '数字科技部'} · ${activeTask?.city || '北京'} · 招聘 ${activeTask?.count || '2人'} · ${planPresentation.label}`}
+        actions={planLocked
+          ? <><button className="btn secondary" onClick={() => openDialog('task-edit', { task: activeTask })}><Settings2 size={16} />任务设置</button><button className="btn primary" onClick={() => setView('workspace')}><ArrowLeft size={16} />返回任务</button></>
+          : <><button className="btn secondary" disabled={planSaving} onClick={() => editing ? cancelEditing() : setEditing(true)}>{editing ? <X size={16} /> : <FileText size={16} />}{editing ? '取消编辑' : '编辑JD'}</button><button className="btn secondary" disabled={planSaving} onClick={() => openDialog('task-edit', { task: activeTask })}><Settings2 size={16} />任务设置</button><button className="btn primary" disabled={planSaving} onClick={savePlan}>{planSaving ? <RefreshCw size={17} /> : <CheckCircle2 size={17} />}{planSaving ? '正在提交 G2 确认' : planMode === 'service-task-only' ? '保存本地预览' : activeTask.planConfirmed ? '保存岗位方案' : '确认岗位方案'}</button></>}
       />
       <section className="plan-source-band">
-        <div><Sparkles size={19} /><span><strong>岗位方案由智能体生成</strong><small>融合 6 份岗位资料、18 次历史招聘与 27 条入职后表现记录</small></span></div>
-        <StatusPill tone="green">知识依据完整</StatusPill>
+        <div><Sparkles size={19} /><span><strong>{planPresentation.title}</strong><small>{planPresentation.detail}</small></span></div>
+        <StatusPill tone={planPresentation.tone}>{planPresentation.label}</StatusPill>
       </section>
+      {planError && <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>岗位方案尚未确认</strong><small>{planError}</small></span></div>}
       <div className="role-plan-layout">
         <section className="panel role-document">
           <div className="panel-heading"><div><span className="section-kicker">岗位说明书</span><h2>JD 建议稿</h2></div><span className="version-label"><History size={14} />基于历史版本 v2.6</span></div>
@@ -1789,7 +2084,7 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
         </section>
         <aside className="plan-side">
           <section className="panel scoring-card">
-            <div className="panel-heading"><div><span className="section-kicker">人才推荐标准</span><h2>岗位评分卡</h2></div><button className="text-button" onClick={() => openDialog('scorecard-edit')}>编辑标准 <Edit3 size={14} /></button></div>
+            <div className="panel-heading"><div><span className="section-kicker">人才推荐标准</span><h2>岗位评分卡</h2></div>{planLocked ? <StatusPill tone="green">已冻结</StatusPill> : <button className="text-button" onClick={() => openDialog('scorecard-edit')}>编辑标准 <Edit3 size={14} /></button>}</div>
             <div className="score-rule-list">
               {scoreRules.map((rule, index) => <div className="score-rule" key={`${rule.label}-${index}`}><span className="rule-weight">{rule.weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${rule.weight}%` }} /></i></div></div>)}
             </div>
@@ -1798,7 +2093,9 @@ function RolePlan({ setView, notify, pushEvent, activeTask, updateActiveTask, kn
         </aside>
         <section className="panel source-panel">
           <div className="panel-heading"><div><span className="section-kicker">生成依据</span><h2>知识来源</h2></div><button className="text-button" onClick={() => setView('knowledge')}>管理知识库 <ArrowRight size={15} /></button></div>
-          <div className="plan-source-grid">{generatedPlan.sourceIds.map((id) => knowledge.find((item) => item.id === id && !item.archived)).filter(Boolean).map((item) => <button className="plan-source" key={item.id} onClick={() => openDialog('knowledge', { item })}><FileText size={16} /><span><strong>{item.title}</strong><small>{item.type} · {item.version}</small></span><Eye size={13} /></button>)}</div>
+          {localKnowledgeSources.length > 0 && <div className="plan-source-grid">{localKnowledgeSources.map((item) => <button className="plan-source" key={item.id} onClick={() => openDialog('knowledge', { item })}><FileText size={16} /><span><strong>{item.title}</strong><small>{item.type} · {item.version} · 本地演示资料</small></span><Eye size={13} /></button>)}</div>}
+          {serviceKnowledgeRefs.length > 0 && <div className="plan-source-grid">{serviceKnowledgeRefs.map((item) => <div className="plan-source" key={`${item.type}-${item.id}-${item.version}`}><FileText size={16} /><span><strong>{item.type}</strong><small>版本 {item.version} · {item.id.slice(0, 8)}</small></span><ShieldCheck size={13} /></div>)}</div>}
+          {!localKnowledgeSources.length && !serviceKnowledgeRefs.length && <div className="source-empty-state"><BookOpenText size={20} /><span><strong>尚无服务端知识引用</strong><small>{planMode === 'service-task-only' ? '生成服务端岗位方案后，这里将显示实际引用的知识版本' : '当前方案未绑定企业知识版本'}</small></span></div>}
         </section>
       </div>
     </>
@@ -1843,42 +2140,151 @@ function Tasks({ setView, tasks, setActiveTaskId, setTaskModalOpen, openDialog }
   );
 }
 
-function TaskModal({ onClose, onSubmit }) {
+export function TaskModal({ onClose, onSubmit, getAccessToken, sourceJobRef = null, getHostContextHash }) {
   const [messages, setMessages] = useState([{ id: 1, role: 'assistant', text: '请告诉我这次想招什么人，可以像平时沟通需求一样描述。' }]);
   const [input, setInput] = useState('');
   const [draft, setDraft] = useState(null);
   const [pending, setPending] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [conversionError, setConversionError] = useState(false);
+  const [serviceState, setServiceState] = useState({ mode: 'idle', detail: '发送需求后连接' });
+  const mountedRef = useRef(true);
+  const operationKeysRef = useRef(new Map());
 
   useEffect(() => {
-    if (!pending) return undefined;
-    const timer = window.setTimeout(() => {
-      const nextDraft = inferTaskFromPrompt(pending, draft || {});
-      const complete = nextDraft.role !== '待确认岗位';
-      const missingLabels = [
-        ['dept', '需求部门'],
-        ['city', '工作地点'],
-        ['headcount', '招聘人数'],
-        ['recruitmentType', '招聘类型'],
-        ['priority', '优先级'],
-        ['due', '完成时间'],
-      ].filter(([key]) => !nextDraft.confirmedFields?.[key]).map(([, label]) => label);
-      setDraft(nextDraft);
-      setMessages((items) => [...items, { id: Date.now(), role: 'assistant', text: complete ? missingLabels.length ? `已识别“${nextDraft.role}”。${missingLabels.join('、')}暂使用演示默认值，你可以继续补充，或直接确认后在岗位方案中调整。` : `“${nextDraft.role}”招聘任务信息已整理完整，请核对草案后确认创建。` : '我还没有识别出明确的岗位名称，请再告诉我具体要招聘什么岗位。' }]);
-      setPending('');
-    }, 520);
-    return () => window.clearTimeout(timer);
-  }, [pending]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  function send(event) {
+  function operationKey(identity) {
+    if (!operationKeysRef.current.has(identity)) {
+      const key = globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      operationKeysRef.current.set(identity, key);
+    }
+    return operationKeysRef.current.get(identity);
+  }
+
+  async function send(event) {
     event.preventDefault();
     const content = input.trim();
     if (!content || pending) return;
     setMessages((items) => [...items, { id: Date.now(), role: 'user', text: content }]);
     setInput('');
     setPending(content);
+    setConversionError(false);
+    setServiceState({ mode: 'loading', detail: '正在理解招聘需求' });
+
+    const draftIdentity = draft?.serviceDraft ? `${draft.serviceDraft.id}:${draft.serviceDraft.version}` : 'new';
+
+    const result = await resolveRequirementDraft(content, draft || {}, {
+      requestOptions: {
+        accessToken: getAccessToken?.(),
+        sourceJobRef,
+        hostContextHash: getHostContextHash?.() || null,
+        idempotencyKey: operationKey(`draft:${draftIdentity}:${content}`),
+      },
+      fallback: inferTaskFromPrompt,
+    });
+    if (!mountedRef.current) return;
+
+    const nextDraft = result.draft;
+    const complete = nextDraft.role !== '待确认岗位';
+    const serviceDraftReady = nextDraft.serviceDraft?.status === 'READY';
+    const missingLabels = [
+      ['dept', '需求部门'],
+      ['city', '工作地点'],
+      ['headcount', '招聘人数'],
+      ['recruitmentType', '招聘类型'],
+      ['priority', '优先级'],
+      ['due', '完成时间'],
+    ].filter(([key]) => !nextDraft.confirmedFields?.[key]).map(([, label]) => label);
+    const answer = !complete
+      ? '我还没有识别出明确的岗位名称，请再告诉我具体要招聘什么岗位。'
+      : missingLabels.length
+        ? serviceDraftReady
+          ? `已识别“${nextDraft.role}”。${missingLabels.join('、')}使用了明确标注的默认值，你可以直接确认，也可以继续补充。`
+          : `已识别“${nextDraft.role}”。请继续补充${missingLabels.join('、')}，信息完整后即可创建任务。`
+        : `“${nextDraft.role}”招聘任务信息已整理完整，请核对草案后确认创建。`;
+    const inputIssue = ['INVALID_REQUIREMENT_INPUT', 'VALIDATION_FAILED'].includes(result.error?.code);
+    const localHint = result.mode === 'local'
+      ? inputIssue
+        ? '输入内容还不满足服务端校验，本次先用本地体验整理。请补充岗位和关键条件后重试。'
+        : '智能体服务当前不可用，本次先用本地体验整理。这是服务故障，不是你的输入问题；重新发送即可重试。'
+      : answer;
+    setDraft(nextDraft);
+    setMessages((items) => [...items, { id: Date.now(), role: 'assistant', text: result.mode === 'local' ? `${localHint} ${answer}` : answer }]);
+    setServiceState(result.mode === 'service'
+      ? { mode: 'service', detail: '已连接招聘智能体' }
+      : { mode: 'local', detail: result.error.message });
+    setPending('');
   }
 
-  const canCreate = draft && draft.role !== '待确认岗位' && !pending;
+  async function confirmDraft() {
+    if (!draft || confirming) return;
+    if ((serviceState.mode === 'local' && !conversionError) || !draft.serviceDraft?.id) {
+      onSubmit({ ...draft, creationMode: 'local' });
+      return;
+    }
+
+    setConfirming(true);
+    setServiceState({ mode: 'loading', detail: '正在执行 G1 人工确认' });
+    let task;
+    let confirmedDraft = draft;
+    try {
+      const envelope = await convertRequirementDraft(draft, {
+        accessToken: getAccessToken?.(),
+        idempotencyKey: operationKey(`convert:${draft.serviceDraft.id}:${draft.serviceDraft.version}`),
+      });
+      const confirmedDraftEnvelope = await getRequirementDraft(draft.serviceDraft.id, {
+        accessToken: getAccessToken?.(),
+      });
+      if (!mountedRef.current) return;
+      confirmedDraft = mapRequirementDraftResponse(confirmedDraftEnvelope, draft);
+      setDraft(confirmedDraft);
+      task = mapRecruitmentTaskResponse(envelope, confirmedDraft);
+      setConversionError(false);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      setConversionError(true);
+      setServiceState({ mode: 'local', detail: error.message || '服务端确认失败' });
+      setMessages((items) => [...items, {
+        id: Date.now(),
+        role: 'assistant',
+        text: '智能体服务未完成任务创建。你可以重试智能体创建，或选择本地继续演示。',
+      }]);
+      if (mountedRef.current) setConfirming(false);
+      return;
+    }
+
+    try {
+      setServiceState({ mode: 'loading', detail: '正在生成 G2 岗位方案' });
+      await generatePositionPlan(task, confirmedDraft, {
+        accessToken: getAccessToken?.(),
+        idempotencyKey: operationKey(`plan:${task.serviceTask.id}:${confirmedDraft.serviceDraft.version}`),
+      });
+      const planEnvelope = await getCurrentPositionPlan(task, { accessToken: getAccessToken?.() });
+      if (!mountedRef.current) return;
+      task = mapPositionPlanResponse(planEnvelope, task);
+      setServiceState({ mode: 'service', detail: 'G1 完成，G2 方案待确认' });
+    } catch (error) {
+      if (!mountedRef.current) return;
+      task = { ...task, servicePlanError: error.message || '岗位方案生成失败' };
+      setServiceState({ mode: 'service', detail: '任务已创建，岗位方案待重试' });
+      setMessages((items) => [...items, {
+        id: Date.now(),
+        role: 'assistant',
+        text: '招聘任务已在智能体服务中创建，但岗位方案暂未生成。进入任务后可继续处理，不会重复创建任务。',
+      }]);
+    } finally {
+      if (mountedRef.current) setConfirming(false);
+    }
+    if (mountedRef.current) onSubmit({ ...task, creationMode: 'service' });
+  }
+
+  const serviceDraftReady = serviceState.mode !== 'service' || draft?.serviceDraft?.status === 'READY';
+  const canCreate = draft && draft.role !== '待确认岗位' && serviceDraftReady && !pending && !confirming;
   const draftFields = draft ? [
     ['需求部门', draft.dept, 'dept'],
     ['工作地点', draft.city, 'city'],
@@ -1894,6 +2300,10 @@ function TaskModal({ onClose, onSubmit }) {
       <section className="modal task-modal task-chat-modal" role="dialog" aria-modal="true" aria-label="对话创建招聘任务" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><span className="section-kicker">招聘需求智能体</span><h2>对话创建招聘任务</h2><p>自然描述需求，由智能体整理任务并生成岗位方案</p></div>
+          <div className={classNames('agent-service-state', serviceState.mode)} title={serviceState.detail}>
+            {serviceState.mode === 'loading' ? <RefreshCw size={15} /> : serviceState.mode === 'local' ? <AlertTriangle size={15} /> : <Bot size={15} />}
+            <span><strong>{serviceState.mode === 'local' ? '本地体验' : '智能体服务'}</strong><small>{serviceState.detail}</small></span>
+          </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
         </div>
         <div className="task-chat-body">
@@ -1910,13 +2320,14 @@ function TaskModal({ onClose, onSubmit }) {
             })}</div>
             <div className="draft-requirement"><small>已理解的需求</small><p>{draft.requirement}</p></div>
             {draft.role !== '待确认岗位' && missingFields.length > 0 && <div className="draft-missing"><AlertTriangle size={17} /><div><strong>还有 {missingFields.length} 项建议确认</strong><p>{missingFields.map(([label]) => label).join('、')}当前使用演示默认值，可继续在下方对话中补充。</p></div></div>}
+            {serviceState.mode === 'service' && !serviceDraftReady && <div className="draft-missing"><LockKeyhole size={17} /><div><strong>服务端草案尚未满足创建条件</strong><p>请继续补充待确认字段；草案状态变为“可确认”后，创建按钮会自动解锁。</p></div></div>}
           </section>}
         </div>
         <form className="chat-composer" onSubmit={send}>
-          <textarea autoFocus value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) send(event); }} placeholder="例如：数字科技部想在北京紧急招聘2名数据治理专家，希望8月底前到岗，要求有大型企业项目经验。" />
+          <textarea autoFocus value={input} disabled={confirming} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) send(event); }} placeholder="例如：数字科技部想在北京紧急招聘2名数据治理专家，希望8月底前到岗，要求有大型企业项目经验。" />
           <button className="icon-button chat-send" type="submit" disabled={!input.trim() || pending} title="发送需求"><Send size={18} /></button>
         </form>
-        <div className="modal-actions"><button type="button" className="btn secondary" onClick={onClose}>取消</button><button type="button" className="btn primary" disabled={!canCreate} onClick={() => onSubmit(draft)}><Sparkles size={16} />确认并生成岗位方案</button></div>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={onClose}>取消</button>{conversionError && <button type="button" className="btn secondary" onClick={() => onSubmit({ ...draft, creationMode: 'local' })}>本地继续</button>}<button type="button" className="btn primary" disabled={!canCreate} onClick={confirmDraft}>{confirming ? <RefreshCw size={16} /> : <Sparkles size={16} />}{confirming ? '正在创建任务' : conversionError ? '重试智能体创建' : serviceState.mode === 'local' ? '本地创建岗位方案' : '确认并生成岗位方案'}</button></div>
       </section>
     </div>
   );
@@ -2096,13 +2507,73 @@ function ScorecardDetail({ task, strategy }) {
   return <><div className="scorecard-total"><span>总分</span><strong>100</strong><small>规则由招聘负责人维护，AI仅提取证据</small></div><div className="score-rule-list dialog-rules">{plan.scoreRules.map((rule) => { const weight = strategy?.[rule.label] ?? rule.weight; return <div className="score-rule" key={rule.label}><span className="rule-weight">{weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${weight}%` }} /></i></div></div>; })}</div><div className="dialog-note"><ShieldCheck size={17} />每项得分必须关联简历或面试原文；信息不足时标记待核实，不自动推断。</div></>;
 }
 
-function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, candidatePool, toggleCandidate, setView, notify, pushEvent, activeTask, updateActiveTask, setInterviewStatuses, matchStrategy, openDialog }) {
+function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, candidatePool, toggleCandidate, setView, notify, pushEvent, activeTask, updateActiveTask, setInterviewStatuses, matchStrategy, openDialog, knowledge, getAccessToken }) {
   const [query, setQuery] = useState('');
   const [minScore, setMinScore] = useState(matchStrategy.minScore || 70);
   const [onlySelected, setOnlySelected] = useState(false);
+  const [matchPending, setMatchPending] = useState(false);
+  const [matchError, setMatchError] = useState('');
+  const matchOperationKeysRef = useRef(new Map());
   const selected = candidatePool.find((item) => item.id === selectedCandidate) || candidatePool[0];
+  const serviceMatchNotStarted = activeTask.creationMode === 'service' && activeTask.planConfirmed && !activeTask.serviceMatchRun;
+  const serviceMatchEmpty = activeTask.creationMode === 'service' && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
+  const serviceDownstreamDemo = activeTask.creationMode === 'service';
   const filteredCandidates = useMemo(() => candidatePool.filter((person) => person.score >= Number(minScore) && (!onlySelected || selectedCandidates.includes(person.id)) && `${person.name}${person.title}${person.company}${person.highlights.join('')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => matchStrategy.sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : b.score - a.score), [candidatePool, query, minScore, onlySelected, selectedCandidates, matchStrategy.sort]);
   useEffect(() => setMinScore(matchStrategy.minScore || 70), [matchStrategy.minScore]);
+
+  function matchOperationKey(identity) {
+    if (!matchOperationKeysRef.current.has(identity)) {
+      matchOperationKeysRef.current.set(identity, globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    }
+    return matchOperationKeysRef.current.get(identity);
+  }
+
+  async function runServiceMatch() {
+    if (matchPending || !activeTask.servicePlan?.id) return;
+    setMatchPending(true);
+    setMatchError('');
+    try {
+      const accessToken = getAccessToken?.();
+      const fixtures = getCandidates({ ...activeTask, serviceMatchResults: null });
+      await Promise.all(fixtures.map((person, index) => {
+        const input = buildDemoCandidateInput(person, index, activeTask);
+        return submitCandidateInput(input, {
+          accessToken,
+          idempotencyKey: matchOperationKey(`candidate:${input.externalCandidateId}:${input.sourceVersion}`),
+        });
+      }));
+      const runEnvelope = await createMatchRun(activeTask, {
+        connectorIds: [DEMO_CANDIDATE_CONNECTOR_ID],
+        filters: { keywords: [], locations: [], educationLevels: [] },
+        dataCutoffAt: new Date().toISOString(),
+        maximumCandidates: 200,
+      }, {
+        accessToken,
+        idempotencyKey: matchOperationKey(`match:${activeTask.servicePlan.id}:${activeTask.servicePlan.version}`),
+        minimumRecommendationScore: Number(matchStrategy.minScore || 70),
+      });
+      const run = runEnvelope.data || runEnvelope;
+      const resultEnvelope = await listMatchResults(run.id, { accessToken });
+      const serviceCandidates = mapServiceMatchResults(resultEnvelope, fixtures, activeTask);
+      updateActiveTask({
+        serviceMatchRun: run,
+        serviceMatchResults: serviceCandidates,
+        candidateSourceMode: 'DEMO_INPUT_ADAPTER',
+        stage: serviceCandidates.length ? '名单确认' : '人才搜索',
+        progress: serviceCandidates.length ? 48 : 30,
+        tone: serviceCandidates.length ? 'blue' : 'amber',
+      });
+      if (serviceCandidates.length) setSelectedCandidate(serviceCandidates[0].id);
+      pushEvent('G3 可解释匹配已完成', `服务端对 ${run.metrics?.scanned ?? fixtures.length} 份候选输入完成硬条件过滤与固定评分，输出 ${serviceCandidates.length} 份结果`, 'success');
+      notify(serviceCandidates.length ? `G3 匹配完成，共 ${serviceCandidates.length} 份可解释结果` : 'G3 匹配完成，但当前范围没有候选结果');
+    } catch (error) {
+      setMatchError(error.message || '人才匹配运行失败');
+      notify('G3 人才匹配未完成，请检查后重试');
+    } finally {
+      setMatchPending(false);
+    }
+  }
+
   function confirmSelection() {
     if (!activeTask.planConfirmed && activeTask.stage === '岗位方案') {
       notify('请先确认岗位方案，再发起人才面试');
@@ -2113,6 +2584,12 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
       notify('请至少选择一位候选人');
       return;
     }
+    if (serviceDownstreamDemo) {
+      updateActiveTask({ demoCandidateSelectionConfirmed: true });
+      pushEvent('保存 G4 演示名单', `本地保存 ${selectedCandidates.length} 位候选人的选择；未创建服务端名单或面试邀请`, 'human');
+      notify('候选选择已保存；G4 名单确认与面试服务尚未接入');
+      return;
+    }
     setInterviewStatuses((items) => ({ ...items, ...Object.fromEntries(selectedCandidates.map((id) => [id, items[id] || '待作答'])) }));
     updateActiveTask({ stage: '在线面试', progress: 66, tone: 'amber' });
     pushEvent('候选名单已确认', `人工确认 ${selectedCandidates.length} 位候选人进入在线面试`);
@@ -2121,13 +2598,24 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
   }
   return (
     <>
-      <PageHeader eyebrow={`${activeTask.code} / 人才搜索`} title="人才匹配" description={`基于“${activeTask.role}”岗位方案，从集团人才库筛选出可解释的候选人排序`}
-        actions={<button className="btn primary" onClick={confirmSelection}><Send size={17} />确认名单并发起面试</button>} />
+      <PageHeader eyebrow={`${activeTask.code} / 人才搜索`} title="人才匹配" description={serviceMatchNotStarted ? '岗位方案已批准，等待运行 G3 标准化候选输入、硬条件过滤、固定评分和证据解释' : activeTask.serviceMatchRun ? `G3 服务端匹配已完成 · ${activeTask.serviceMatchRun.pipelineVersion}` : `基于“${activeTask.role}”岗位方案的候选人排序`}
+        actions={serviceMatchNotStarted || serviceMatchEmpty
+          ? <button className="btn primary" disabled={matchPending} onClick={runServiceMatch}>{matchPending ? <RefreshCw size={17} /> : <Play size={17} />}{matchPending ? '正在执行 G3' : serviceMatchEmpty ? '重新运行 G3' : '运行 G3 匹配'}</button>
+          : <button className="btn primary" disabled={!candidatePool.length} onClick={confirmSelection}><Save size={17} />{serviceDownstreamDemo ? '保存演示选择' : '确认名单并发起面试'}</button>} />
+      {(serviceMatchNotStarted || serviceMatchEmpty) && <section className="agent-boundary-notice"><ShieldCheck size={18} /><div><strong>{serviceMatchEmpty ? '上次运行没有检索到候选人' : 'G3 智能体服务已就绪'}</strong><p>{serviceMatchEmpty ? '可以重新导入虚构候选样本并执行匹配；服务会创建新的 MatchRun，保留上次运行记录。' : '本次将导入 12 位明确标记的虚构候选样本，真实执行候选规范化、硬条件过滤、固定评分、证据定位和结果审计；接入 ATS 时由客户候选接口替换输入适配器。'}</p></div></section>}
+      {activeTask.serviceMatchRun && !serviceMatchEmpty && <section className="agent-boundary-notice success"><CheckCircle2 size={18} /><div><strong>当前候选排序来自 G3 服务端</strong><p>结果绑定岗位方案、评分卡和简历版本。G4 名单确认与面试编排尚未后端化，页面只保存演示选择，不会发送邀请。</p></div></section>}
+      {matchError && <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>G3 匹配未完成</strong><small>{matchError}</small></span></div>}
+      {serviceMatchNotStarted || serviceMatchEmpty ? <section className="panel workspace-gate talent-service-start">
+        <span className="workspace-gate-icon searching"><Search size={26} /></span>
+        <div><span className="section-kicker">真实服务端运行</span><h2>先执行候选匹配，再查看结果</h2><p>智能体不会凭空生成候选人。点击运行后，虚构样本会通过标准输入接口进入服务端，并按照已批准评分卡生成可复算结果。</p></div>
+        <div className="workspace-gate-meta"><span><ShieldCheck size={15} />固定规则决定总分</span><span><History size={15} />每项得分保留原文证据</span></div>
+        <button className="btn primary" disabled={matchPending} onClick={runServiceMatch}>{matchPending ? <RefreshCw size={17} /> : <Play size={17} />}{matchPending ? '规范化并评分中' : serviceMatchEmpty ? '重新导入并运行' : '导入样本并运行'}</button>
+      </section> : <>
       <section className="match-summary">
         <div><span>评分卡</span><strong>{activeTask.role}评分卡</strong><button title="查看评分规则" onClick={() => openDialog('scorecard')}><Eye size={15} /></button></div>
-        <div><span>检索范围</span><strong>集团人才库 · 近 5 年</strong></div>
-        <div><span>自动排除</span><strong>硬性条件不符 167 人</strong></div>
-        <button className="text-button" onClick={() => openDialog('strategy')}><SlidersHorizontal size={16} />调整匹配策略</button>
+        <div><span>候选输入</span><strong>{activeTask.serviceMatchRun ? '演示输入适配器' : '本地演示数据'}</strong></div>
+        <div><span>硬条件排除</span><strong>{activeTask.serviceMatchRun?.metrics?.hardFiltered ?? 167} 人</strong></div>
+        <button className="text-button" onClick={() => activeTask.serviceMatchRun ? openDialog('scorecard') : openDialog('strategy')}><SlidersHorizontal size={16} />{activeTask.serviceMatchRun ? '查看执行规则' : '调整匹配策略'}</button>
       </section>
       <div className="talent-layout">
         <section className="candidate-list-panel">
@@ -2146,13 +2634,17 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
             {!filteredCandidates.length && <div className="empty-state compact"><Search size={20} /><strong>没有符合当前条件的候选人</strong><span>可降低匹配阈值或调整筛选条件</span></div>}
           </div>
         </section>
-        <CandidateDetail person={selected} task={activeTask} selected={selectedCandidates.includes(selected.id)} onToggle={() => toggleCandidate(selected.id)} openDialog={openDialog} notify={notify} />
+        {selected && <CandidateDetail person={selected} task={activeTask} selected={selectedCandidates.includes(selected.id)} onToggle={() => toggleCandidate(selected.id)} openDialog={openDialog} notify={notify} knowledge={knowledge} />}
       </div>
+      </>}
     </>
   );
 }
 
-function CandidateDetail({ person, task, selected, onToggle, openDialog, notify }) {
+function CandidateDetail({ person, task, selected, onToggle, openDialog, notify, knowledge }) {
+  const preferredSourceId = task.role.includes('数据') ? 10 : 3;
+  const portraitSource = knowledge.find((item) => item.id === preferredSourceId && !item.archived)
+    || knowledge.find((item) => item.type === '人才画像' && !item.archived);
   return (
     <section className="candidate-detail">
       <div className="candidate-detail-head">
@@ -2183,7 +2675,9 @@ function CandidateDetail({ person, task, selected, onToggle, openDialog, notify 
       </div>
       <div className="detail-section source-section">
         <div className="detail-title"><h3>画像对照来源</h3><button onClick={() => openDialog('scorecard')}>查看评分卡 <ArrowRight size={14} /></button></div>
-        <button className="source-row" onClick={() => openDialog('knowledge', { item: task.role.includes('数据') ? knowledgeSeed[9] : knowledgeSeed[2] })}><BookOpenText size={17} /><span><strong>{task.role.includes('数据') ? '数据治理项目骨干成功特征分析' : '研发岗位高绩效人才特征分析'}</strong><small>人才画像 · 当前版本 · 引用 6 个特征</small></span><Eye size={15} /></button>
+        {portraitSource
+          ? <button className="source-row" onClick={() => openDialog('knowledge', { item: portraitSource })}><BookOpenText size={17} /><span><strong>{portraitSource.title}</strong><small>{portraitSource.type} · {portraitSource.version} · 已引用 {portraitSource.refs} 次</small></span><Eye size={15} /></button>
+          : <div className="source-row source-empty"><BookOpenText size={17} /><span><strong>暂无可用人才画像</strong><small>请先在知识库中发布人才画像资料</small></span></div>}
       </div>
       <div className="sticky-actions"><button className="btn secondary" onClick={() => { downloadText(`${person.name}-简历.txt`, buildResumeText(person)); notify('简历已下载'); }}><Download size={16} />下载简历</button><button className={classNames('btn', selected ? 'selected-button' : 'primary')} onClick={onToggle}>{selected ? <Check size={17} /> : <Plus size={17} />}{selected ? '已加入面试名单' : '加入面试名单'}</button></div>
     </section>

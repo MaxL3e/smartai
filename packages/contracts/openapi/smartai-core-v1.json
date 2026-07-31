@@ -280,6 +280,7 @@
             "description": "草案已创建",
             "headers": {
               "ETag": { "$ref": "#/components/headers/ETag" },
+              "X-SmartAI-Input-Hash": { "$ref": "#/components/headers/SmartAIInputHash" },
               "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }
             },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftResponse" } } }
@@ -307,7 +308,7 @@
         "responses": {
           "200": {
             "description": "需求草案",
-            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "X-SmartAI-Input-Hash": { "$ref": "#/components/headers/SmartAIInputHash" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftResponse" } } }
           },
           "default": { "$ref": "#/components/responses/Error" }
@@ -331,7 +332,7 @@
         "responses": {
           "200": {
             "description": "草案已更新",
-            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" }, "X-SmartAI-Input-Hash": { "$ref": "#/components/headers/SmartAIInputHash" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RequirementDraftResponse" } } }
           },
           "409": { "$ref": "#/components/responses/VersionConflict" },
@@ -679,6 +680,31 @@
           "200": {
             "description": "智能体运行",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRunResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/candidate-inputs": {
+      "post": {
+        "tags": ["Matching"],
+        "summary": "Normalize a candidate input for deterministic matching",
+        "description": "Accepts a versioned candidate snapshot from an ATS application, talent pool, or manual import. The service stores an immutable normalized resume version; this endpoint does not run an LLM or vector retrieval pipeline.",
+        "operationId": "createCandidateInput",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateInputRequest" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Candidate input normalized and stored as an immutable resume version",
+            "headers": { "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateInputResponse" } } }
           },
           "default": { "$ref": "#/components/responses/Error" }
         }
@@ -1886,6 +1912,7 @@
     },
     "headers": {
       "ETag": { "description": "当前资源版本，格式 W/\"{version}\"。", "schema": { "type": "string" } },
+      "SmartAIInputHash": { "description": "当前招聘需求草案的规范化确认摘要。G1 确认必须原样回传。", "schema": { "type": "string", "pattern": "^[a-f0-9]{64}$" } },
       "IdempotencyReplayed": { "description": "true 表示返回了同一幂等请求的首次结果。", "schema": { "type": "boolean" } }
     },
     "responses": {
@@ -2623,6 +2650,46 @@
       },
       "CandidateSelectionStatus": { "type": "string", "enum": ["UNREVIEWED", "SHORTLISTED", "CONFIRMED", "EXCLUDED"] },
       "TaskCandidateStatus": { "type": "string", "enum": ["DISCOVERED", "UNDER_REVIEW", "SELECTED", "INTERVIEWING", "EVALUATED", "CLOSED"] },
+      "CandidateSourceType": { "type": "string", "enum": ["ATS_APPLICATION", "TALENT_POOL", "MANUAL_IMPORT"] },
+      "CandidateConsentStatus": { "type": "string", "enum": ["UNKNOWN", "GRANTED", "REVOKED", "EXPIRED"] },
+      "ResumeSection": {
+        "type": "object",
+        "required": ["code", "text"],
+        "properties": {
+          "code": { "type": "string", "enum": ["SUMMARY", "EXPERIENCE", "SKILLS", "EDUCATION", "LOCATION", "CERTIFICATION", "PROJECT"] },
+          "text": { "type": "string", "minLength": 1, "maxLength": 20000 }
+        },
+        "additionalProperties": false
+      },
+      "CandidateFacts": {
+        "type": "object",
+        "properties": {
+          "location": { "type": ["string", "null"], "maxLength": 100 },
+          "experienceYears": { "type": ["number", "null"], "minimum": 0, "maximum": 80 },
+          "educationLevel": { "type": ["string", "null"], "maxLength": 80 },
+          "skills": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1, "maxLength": 100 }, "maxItems": 100 }
+        },
+        "additionalProperties": false
+      },
+      "CandidateInputRequest": {
+        "type": "object",
+        "required": ["connectorId", "sourceType", "sourceSystem", "externalCandidateId", "sourceVersion", "displayName", "consentStatus", "sections", "facts", "sourceUpdatedAt"],
+        "properties": {
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "sourceType": { "$ref": "#/components/schemas/CandidateSourceType" },
+          "sourceSystem": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$" },
+          "externalCandidateId": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "sourceVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "candidateNo": { "type": ["string", "null"], "maxLength": 60 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "consentStatus": { "$ref": "#/components/schemas/CandidateConsentStatus" },
+          "sections": { "type": "array", "items": { "$ref": "#/components/schemas/ResumeSection" }, "minItems": 1, "maxItems": 50 },
+          "facts": { "$ref": "#/components/schemas/CandidateFacts" },
+          "sourceApplicationRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
+          "sourceUpdatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
       "CandidateSummary": {
         "type": "object",
         "required": ["id", "candidateNo", "displayName", "consentStatus"],
@@ -2630,10 +2697,30 @@
           "id": { "$ref": "#/components/schemas/Uuid" },
           "candidateNo": { "type": "string", "minLength": 1, "maxLength": 60 },
           "displayName": { "type": "string", "minLength": 1, "maxLength": 120, "description": "按权限返回全名或掩码。" },
-          "consentStatus": { "type": "string", "enum": ["UNKNOWN", "GRANTED", "REVOKED", "EXPIRED"] },
+          "consentStatus": { "$ref": "#/components/schemas/CandidateConsentStatus" },
           "sourceRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] }
         },
         "additionalProperties": false
+      },
+      "CandidateInputReceipt": {
+        "type": "object",
+        "required": ["candidate", "resumeVersionRef", "connectorId", "sourceType", "contentHash", "normalizerKind", "normalizedAt"],
+        "properties": {
+          "candidate": { "$ref": "#/components/schemas/CandidateSummary" },
+          "resumeVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "connectorId": { "$ref": "#/components/schemas/Uuid" },
+          "sourceType": { "$ref": "#/components/schemas/CandidateSourceType" },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "normalizerKind": { "type": "string", "enum": ["DETERMINISTIC_NORMALIZER"] },
+          "normalizedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "CandidateInputResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/CandidateInputReceipt" } } }
+        ]
       },
       "TaskCandidate": {
         "type": "object",
@@ -2647,7 +2734,7 @@
           "version": { "$ref": "#/components/schemas/Version" },
           "currentMatchResultRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
           "candidateListVersionRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
-          "sourceType": { "type": "string", "enum": ["ATS_APPLICATION", "TALENT_POOL", "MANUAL_IMPORT"] },
+          "sourceType": { "$ref": "#/components/schemas/CandidateSourceType" },
           "sourceApplicationRef": { "oneOf": [{ "$ref": "#/components/schemas/ExternalRef" }, { "type": "null" }] },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
@@ -2675,10 +2762,11 @@
         },
         "additionalProperties": false
       },
+      "MatchGeneratorKind": { "type": "string", "enum": ["DETERMINISTIC_RULES"] },
       "MatchRunStatus": { "type": "string", "enum": ["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"] },
       "MatchRun": {
         "type": "object",
-        "required": ["id", "taskId", "positionPlanVersionRef", "scorecardVersionRef", "candidateScope", "searchIndexVersion", "pipelineVersion", "status", "version", "metrics", "requestedBy", "createdAt"],
+        "required": ["id", "taskId", "positionPlanVersionRef", "scorecardVersionRef", "candidateScope", "searchIndexVersion", "pipelineVersion", "generatorKind", "status", "version", "metrics", "requestedBy", "createdAt"],
         "properties": {
           "id": { "$ref": "#/components/schemas/Uuid" },
           "taskId": { "$ref": "#/components/schemas/Uuid" },
@@ -2687,6 +2775,7 @@
           "candidateScope": { "$ref": "#/components/schemas/CandidateScope" },
           "searchIndexVersion": { "type": "string", "minLength": 1, "maxLength": 100 },
           "pipelineVersion": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "generatorKind": { "$ref": "#/components/schemas/MatchGeneratorKind" },
           "status": { "$ref": "#/components/schemas/MatchRunStatus" },
           "version": { "$ref": "#/components/schemas/Version" },
           "metrics": { "$ref": "#/components/schemas/MatchRunMetrics" },
@@ -2764,7 +2853,7 @@
       },
       "MatchResult": {
         "type": "object",
-        "required": ["id", "matchRunId", "taskCandidateRef", "candidate", "resumeVersionRef", "scorecardVersionRef", "rank", "totalScore", "recommendationLevel", "hardFilterResult", "criterionScores", "confidence", "reviewStatus", "version"],
+        "required": ["id", "matchRunId", "taskCandidateRef", "candidate", "resumeVersionRef", "scorecardVersionRef", "rank", "totalScore", "recommendationLevel", "generatorKind", "hardFilterResult", "criterionScores", "confidence", "reviewStatus", "version"],
         "properties": {
           "id": { "$ref": "#/components/schemas/Uuid" },
           "matchRunId": { "$ref": "#/components/schemas/Uuid" },
@@ -2775,6 +2864,7 @@
           "rank": { "type": "integer", "minimum": 1 },
           "totalScore": { "type": "number", "minimum": 0, "maximum": 100 },
           "recommendationLevel": { "type": "string", "enum": ["NOT_RECOMMENDED", "REVIEW", "RECOMMENDED", "STRONGLY_RECOMMENDED"] },
+          "generatorKind": { "$ref": "#/components/schemas/MatchGeneratorKind" },
           "hardFilterResult": { "$ref": "#/components/schemas/HardFilterResult" },
           "criterionScores": { "type": "array", "items": { "$ref": "#/components/schemas/CriterionScore" }, "minItems": 1, "maxItems": 50 },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 },

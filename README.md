@@ -4,7 +4,7 @@
 
 - 在线体验：[https://maxl3e.github.io/smartai/](https://maxl3e.github.io/smartai/)
 - ATS 嵌入协议模拟台（无后端认证）：[https://maxl3e.github.io/smartai/apps/host-harness/](https://maxl3e.github.io/smartai/apps/host-harness/)
-- 当前版本：纯前端可交互演示，不依赖后端数据库
+- 当前演示：招聘需求 G1 与岗位方案 G2 已接入本地 Core API；人才匹配、面试、评价和知识维护仍使用明确标识的演示数据
 - 数据说明：演示数据均为虚构数据，不包含真实候选人信息
 
 ## 产品目标
@@ -69,12 +69,21 @@
 - 可复用的 iframe Embed SDK、精确 Origin 消息握手和宿主能力协商
 - ATS 岗位侧栏、候选人侧栏和全页工作区联调台
 - 招聘业务 OpenAPI、跨运行时 AsyncAPI 和接口总清单
+- Java 21 + Spring Boot 4.0.x + Spring Modulith 2.0 的 Core API 安全、数据迁移和模块化地基
+- 招聘需求 G1 后端闭环：自然语言草案、补充修订、字段置信度、人工确认、招聘任务持久化和前端 API 接入
+- G1 的幂等、乐观锁、租户隔离、过期处理、确认哈希、原始输入加密和人工确认记录
+- 岗位方案 G2 后端闭环：确定性方案生成、JD 与评分卡版本修改、审核门禁、人工批准和 AgentRun 查询
+- 人才匹配 G3 后端闭环：候选输入标准化、不可变简历版本、硬条件过滤、固定评分、逐项原文证据、匹配运行和任务候选人持久化
+- 嵌入场景创建需求时可将 ATS 岗位引用和已鉴权宿主上下文哈希写入服务端草案
 
 暂未实现：
 
 - 真实大模型、RAG、向量数据库和文档解析服务
 - 客户 ATS、人才库、在线面试、短信邮件和审批系统的真实连接器实现
-- 服务端数据库、用户登录、组织权限和多租户隔离
+- G2 的真实 LLM/RAG 生成与知识引用；当前生成器为 `DETERMINISTIC_DEMO`，不会调用大模型或知识检索
+- 后续招聘业务 endpoint：知识检索、候选名单确认、面试编排、结果回收和综合评价
+- 真实用户认证、组织数据范围、生产环境 API adapter 和 PostgreSQL 部署验收
+- 已配置并完成验收的 PostgreSQL 生产实例及完整后端业务闭环
 - 真实候选人数据处理与生产环境合规能力
 
 ## 技术栈
@@ -85,6 +94,8 @@
 - 浏览器 `localStorage`
 - GitHub Actions + GitHub Pages
 - OpenAPI 3.1 + AsyncAPI 3.0
+- Java 21 + Spring Boot 4.0.x + Spring Modulith 2.0
+- Spring Security + Flyway；PostgreSQL 是目标事实源，当前未连接生产实例
 
 主要代码集中在：
 
@@ -92,6 +103,7 @@
 src/App.jsx                         页面、状态、演示业务逻辑与嵌入 Shell
 src/styles.css                      全局设计系统与响应式布局
 apps/host-harness/                  ATS 宿主联调台
+apps/core-api/                      Core API 安全、Flyway 与模块化工程地基
 packages/embed-sdk/                 iframe 生命周期与宿主消息 SDK
 packages/contracts/openapi/         招聘业务和嵌入会话 HTTP 契约
 packages/contracts/asyncapi/        Webhook、领域事件和 AI 消息契约
@@ -137,9 +149,33 @@ npm run contracts:check
 npm run test:embed
 ```
 
+### Core API 本地验证
+
+`apps/core-api/` 已实现招聘智能体前三个服务端纵向切片：G1 负责将自然语言需求整理为可确认草案并创建招聘任务；G2 负责生成、修改和人工批准岗位方案与评分卡；G3 负责接收候选输入、生成不可变简历版本，并执行硬条件过滤、确定性加权评分和逐项证据定位。前端的“新建招聘任务”“岗位方案”和“人才匹配”已接入这些接口；服务异常会明确显示错误，不会把固定数据冒充服务结果。G2 使用 `DETERMINISTIC_DEMO`，G3 使用 `DETERMINISTIC_RULES`，两者均未调用真实 LLM、RAG 或企业知识检索。
+
+Windows PowerShell：
+
+```powershell
+cd apps/core-api
+.\mvnw.cmd clean test
+.\mvnw.cmd -Dspring-boot.run.profiles=local spring-boot:run
+```
+
+Linux/macOS：
+
+```bash
+cd apps/core-api
+./mvnw clean test
+./mvnw -Dspring-boot.run.profiles=local spring-boot:run
+```
+
+本地服务默认监听 `http://127.0.0.1:8080/`，当前可用探针为 `/actuator/health`。这些命令必须显式使用 `local` profile；该 profile 使用本地测试数据库，不代表 PostgreSQL 生产连接已经完成。
+
+部署时必须显式启用 `production` profile，并提供 `SMARTAI_DATABASE_URL`、`SMARTAI_DATABASE_RUNTIME_USERNAME`、`SMARTAI_DATABASE_RUNTIME_PASSWORD`、`SMARTAI_DATABASE_MIGRATION_USERNAME` 和 `SMARTAI_DATABASE_MIGRATION_PASSWORD`。任一必填配置缺失都必须令应用启动失败，严禁回退到 `local` profile、H2 或隐式默认凭据。
+
 ## 数据与重置
 
-任务、候选名单、面试状态、评价结论、知识资料和审计日志保存在当前浏览器的 `localStorage` 中。清理该站点的浏览器存储后，应用会恢复为内置演示数据。
+服务端创建的招聘需求草案、招聘任务、G2 岗位方案、标准化候选输入、简历版本、G3 匹配运行与结果保存在 Core API 数据库中。当前 G3 页面导入的 12 位候选人均为明确标记的虚构样本；正式接入 ATS 时由候选输入适配器替换。候选名单确认、面试状态、评价结论、知识资料和前端审计日志仍保存在当前浏览器的 `localStorage` 中；清理站点存储后，这些演示数据会恢复为内置状态。
 
 不要在本演示环境录入真实候选人简历、联系方式或其他敏感信息。
 

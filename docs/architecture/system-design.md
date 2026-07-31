@@ -124,7 +124,9 @@ iframe 是 UI、依赖和数据隔离边界；SDK 只负责会话引导、宿主
 
 ### 4.2 Java 业务核心
 
-推荐技术栈：Java 21、Spring Boot 3、Spring Security、Spring Modulith、jOOQ、Flyway、Bean Validation、Resilience4j。
+确定技术栈：Java 21、Spring Boot 4.0.x、Spring Security、Spring Modulith 2.0、jOOQ、Flyway、Bean Validation、Resilience4j。Spring Boot 与 Spring Modulith 的主版本属于架构基线，升级前必须通过 ADR、依赖兼容和回归测试评审。
+
+当前 `apps/core-api/` 除安全、数据与模块化地基外，已完成 G1“需求草案 -> 人工确认 -> 招聘任务”、G2“岗位方案 -> 版本修改 -> 人工批准”和 G3“候选输入 -> 标准化简历版本 -> 硬条件过滤 -> 固定评分与证据”纵向切片。实现包含幂等、乐观锁、租户隔离、敏感字段加密、确认哈希、AgentRun、MatchRun、逐项 ResumeVersion 证据和人工确认记录；前端 G1-G3 页面已接入这些服务。G2/G3 当前均为确定性引擎，不调用 LLM、RAG 或企业知识检索。名单确认、面试、评价、知识检索、真实身份/权限和 PostgreSQL 生产实例仍未实现，因此尚不构成完整生产招聘智能体。
 
 首期采用单一部署单元，但代码与数据库访问必须按模块约束：
 
@@ -364,9 +366,10 @@ flowchart TB
     WORKER2 -.-> OBS
 ```
 
-- 本地开发：Docker Compose 启动 PostgreSQL、Redis、MinIO、OpenSearch、RabbitMQ 和观测组件。
+- 当前 Core API 地基本地验证必须显式启用 `local` profile。Windows 在 `apps/core-api` 执行 `.\mvnw.cmd -Dspring.profiles.active=local test` 或 `.\mvnw.cmd -Dspring-boot.run.profiles=local spring-boot:run`；Linux/macOS 执行 `./mvnw -Dspring.profiles.active=local test` 或 `./mvnw -Dspring-boot.run.profiles=local spring-boot:run`。
+- 目标本地开发环境：后续由 Docker Compose 启动 PostgreSQL、Redis、MinIO、OpenSearch、RabbitMQ 和观测组件；当前 local profile 仅用于工程地基验证，不代表这些依赖已完成联调。
 - 集成测试：独立命名空间与匿名化测试数据，连接器使用 sandbox 或 mock server。
-- 生产：Kubernetes + Helm，Core API 和 AI Worker 独立扩容；数据库优先采用客户批准的托管或高可用方案。
+- 生产：必须显式启用 `production` profile；缺少 `SMARTAI_DATABASE_URL`、运行时账号 `SMARTAI_DATABASE_RUNTIME_USERNAME/PASSWORD` 或迁移账号 `SMARTAI_DATABASE_MIGRATION_USERNAME/PASSWORD` 时启动必须 fail fast，禁止回退到 local/H2。目标部署为 Kubernetes + Helm，Core API 和 AI Worker 独立扩容；数据库优先采用客户批准的托管或高可用方案。
 - 私有化部署：支持离线镜像仓库、私有模型、客户 CA、客户日志与密钥系统。
 - ATS 与知聘使用独立 Origin，优先采用客户子域或独立产品域；按租户配置 `frame-ancestors`、SDK 固定版本/SRI 和独立窗口降级。
 - 发布：GitHub Actions 或客户 CI 构建签名镜像，经依赖扫描、SAST、测试和审批后逐环境推进；数据库迁移必须向后兼容并可独立回滚应用。
