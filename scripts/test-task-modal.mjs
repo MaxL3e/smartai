@@ -75,10 +75,9 @@ const criticalEntrypoints = [
   ['global search', /className="command-search"\s+onClick=\{onSearch\}/, /placeholder="搜索任务、候选人或知识资料"/],
   ['role plan save', /disabled=\{planSaving\}\s+onClick=\{savePlan\}/, /岗位方案尚未确认/],
   ['G3 match', /disabled=\{matchPending\}\s+onClick=\{runServiceMatch\}/, /G3 匹配未完成/],
-  ['candidate confirmation', /onClick=\{confirmSelection\}/, /G4 名单确认与面试编排尚未后端化/],
-  ['interview evaluation', /disabled=\{!completedCount\}[\s\S]{0,240}onClick=\{\(\) => openEvaluation\(\)\}/, /至少完成一位候选人的面试后可用/],
-  ['interview reminder', /disabled=\{!interviewees\.length \|\| completedCount === interviewees\.length\}[\s\S]{0,360}onClick=\{remindAll\}/, /当前批次已全部完成，无需提醒/],
-  ['evaluation decision', /onClick=\{\(\) => decide\('进入下一轮'\)\}/, /评价结论已保存|评价已全部确认/],
+  ['candidate confirmation', /onClick=\{confirmSelection\}/, /名单确认与推荐报告尚未后端化/],
+  ['interview reservation', /view === 'interviews' && <ReservedCapability type="interview"/, /不发送邀请，不调用消息或在线面试平台/],
+  ['evaluation reservation', /view === 'evaluation' && <ReservedCapability type="evaluation"/, /不生成虚构面试分或测评分/],
   ['knowledge creation', /onClick=\{\(\) => setModalOpen\(true\)\}[\s\S]{0,120}新增知识/, /资料已进入解析队列/],
   ['audit export', /onClick=\{exportAudit\}[\s\S]{0,100}导出审计日志/, /审计日志已导出/],
 ];
@@ -87,6 +86,8 @@ for (const [name, handlerPattern, feedbackPattern] of criticalEntrypoints) {
   assertSource(handlerPattern, `${name} must bind its primary action.`);
   assertSource(feedbackPattern, `${name} must expose visible feedback or an explanatory state.`);
 }
+
+assert.doesNotMatch(appSource, /模拟完成|发送面试提醒|interviewScore|assessmentScore/, 'Reserved interview and evaluation capabilities must not retain simulated execution logic.');
 
 assertSource(
   /const serviceDraftReady[\s\S]*?const canCreate[\s\S]*?serviceDraftReady/,

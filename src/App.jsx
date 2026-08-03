@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Circle,
   CircleHelp,
   Clock3,
   Download,
@@ -83,8 +82,8 @@ const navItems = [
   { id: 'workspace', label: '智能体工作台', icon: LayoutDashboard },
   { id: 'tasks', label: '招聘任务', icon: BriefcaseBusiness, count: 4 },
   { id: 'talent', label: '人才匹配', icon: UsersRound, count: 12 },
-  { id: 'interviews', label: '面试协同', icon: Video, count: 3 },
-  { id: 'evaluation', label: '综合评价', icon: BadgeCheck },
+  { id: 'interviews', label: '面试协同', icon: Video, note: '预留' },
+  { id: 'evaluation', label: '综合评价', icon: BadgeCheck, note: '后续' },
 ];
 
 const manageItems = [
@@ -109,8 +108,8 @@ const flowSteps = [
   { title: '岗位方案', completedNote: '已确认', activeNote: '等待人工确认', pendingNote: '等待生成' },
   { title: '人才搜索', completedNote: '匹配完成', activeNote: '智能体检索中', pendingNote: '未开始' },
   { title: '名单确认', completedNote: '名单已确认', activeNote: '等待人工确认', pendingNote: '未开始' },
-  { title: '在线面试', completedNote: '结果已回收', activeNote: '面试进行中', pendingNote: '未开始' },
-  { title: '综合评价', completedNote: '评价已确认', activeNote: '等待人工确认', pendingNote: '未开始' },
+  { title: '在线面试', completedNote: '接口预留', activeNote: '接口预留', pendingNote: '接口预留' },
+  { title: '综合评价', completedNote: '后续能力', activeNote: '后续能力', pendingNote: '后续能力' },
 ];
 
 const candidatesSeed = [
@@ -250,27 +249,21 @@ const initialEvents = [
 
 const initialNotifications = [
   { id: 1, title: '候选名单待确认', detail: '高级后端开发工程师已有 12 位推荐候选人', time: '8分钟前', read: false, target: 'talent' },
-  { id: 2, title: '在线面试已完成', detail: '陈思远的在线面试评价已生成', time: '36分钟前', read: false, target: 'evaluation' },
+  { id: 2, title: '候选名单草稿待确认', detail: '陈思远等候选人的匹配证据已整理', time: '36分钟前', read: false, target: 'talent' },
   { id: 3, title: '知识资料建议复核', detail: '2024-2025研发招聘复盘存在 2 项时效性提示', time: '昨天', read: true, target: 'knowledge' },
 ];
 
 const initialTasks = [
   { code: 'R2026-0718', role: '高级后端开发工程师', dept: '数字科技部', city: '北京', count: '2人', headcount: 2, stage: '名单确认', progress: 48, owner: '李佳', due: '08-15', tone: 'blue', recruitmentType: '社会招聘', priority: '高', requirement: '负责集团级数字化平台核心服务的架构设计与研发。' },
-  { code: 'R2026-0712', role: '财务共享中心经理', dept: '财务管理部', city: '上海', count: '1人', headcount: 1, stage: '在线面试', progress: 66, owner: '王楠', due: '08-08', tone: 'amber', recruitmentType: '社会招聘', priority: '中', requirement: '负责财务共享中心运营管理与流程优化。' },
+  { code: 'R2026-0712', role: '财务共享中心经理', dept: '财务管理部', city: '上海', count: '1人', headcount: 1, stage: '名单确认', progress: 48, owner: '王楠', due: '08-08', tone: 'blue', recruitmentType: '社会招聘', priority: '中', requirement: '负责财务共享中心运营管理与流程优化。' },
   { code: 'R2026-0709', role: '能源市场分析师', dept: '战略发展部', city: '北京', count: '3人', headcount: 3, stage: '人才搜索', progress: 31, owner: '张晨', due: '08-20', tone: 'green', recruitmentType: '校园招聘', priority: '中', requirement: '跟踪能源市场趋势并形成经营分析建议。' },
-  { code: 'R2026-0626', role: '合规风控主管', dept: '法律合规部', city: '深圳', count: '1人', headcount: 1, stage: '综合评价', progress: 86, owner: '陈敏', due: '07-30', tone: 'gray', recruitmentType: '社会招聘', priority: '高', requirement: '建立业务合规审查和风险预警机制。' },
+  { code: 'R2026-0626', role: '合规风控主管', dept: '法律合规部', city: '深圳', count: '1人', headcount: 1, stage: '名单确认', progress: 48, owner: '陈敏', due: '07-30', tone: 'blue', recruitmentType: '社会招聘', priority: '高', requirement: '建立业务合规审查和风险预警机制。' },
 ];
 
 const initialCandidateSelections = {
   'R2026-0718': [1, 2],
   'R2026-0712': [1, 3],
   'R2026-0626': [2, 3],
-};
-
-const initialInterviewStatuses = {
-  'R2026-0718': { 1: '已完成', 2: '待作答' },
-  'R2026-0712': { 1: '已完成', 3: '待作答' },
-  'R2026-0626': { 2: '已完成', 3: '已完成' },
 };
 
 function loadStored(key, fallback) {
@@ -283,8 +276,11 @@ function loadStored(key, fallback) {
 }
 
 function normalizeStoredTasks(value) {
-  if (!Array.isArray(value)) return initialTasks;
+  if (!Array.isArray(value) || value.length === 0) return initialTasks;
   return value.map((task) => {
+    if (['在线面试', '综合评价', '已完成'].includes(task.stage)) {
+      return { ...task, stage: '名单确认', progress: 48, tone: 'blue', legacyStage: task.stage };
+    }
     const isServiceTask = task.creationMode === 'service' || Boolean(task.serviceTask);
     if (!isServiceTask) return task;
     if (!task.servicePlan?.id) {
@@ -302,6 +298,15 @@ function normalizeStoredTasks(value) {
     }
     return task;
   });
+}
+
+function normalizeStoredEvents(value) {
+  if (!Array.isArray(value)) return initialEvents;
+  return value
+    .filter((event) => !/发送面试|面试提醒|收到在线面试|面试结果|综合评价|撤回面试|更新面试截止/.test(event?.title || ''))
+    .map((event) => event?.title === '保存 G4 演示名单'
+      ? { ...event, title: '保存推荐名单草稿', detail: String(event.detail || '').replace('未创建服务端名单或面试邀请', '未创建服务端确认版本或执行外部动作') }
+      : event);
 }
 
 function downloadText(filename, content, type = 'text/plain;charset=utf-8') {
@@ -396,7 +401,7 @@ function stageIndex(stage) {
 }
 
 function nextStage(stage) {
-  return { 岗位方案: '人才搜索', 人才搜索: '名单确认', 名单确认: '在线面试', 在线面试: '综合评价', 综合评价: '已完成' }[stage] || stage;
+  return { 岗位方案: '人才搜索', 人才搜索: '名单确认' }[stage] || stage;
 }
 
 const defaultPlanThresholds = { strong: 88, recommended: 80, review: 70 };
@@ -633,7 +638,7 @@ function PageHeader({ eyebrow, title, description, actions }) {
   );
 }
 
-function AgentRuntimeBar({ runtime, onOpenAudit, onOpenEmbed }) {
+function AgentRuntimeBar({ runtime, onOpenAudit, onOpenRuntime }) {
   const connected = runtime.status === 'online';
   const checking = runtime.status === 'checking';
   const serviceStatus = checking ? '检查中' : connected ? '服务可用' : '未连接';
@@ -641,8 +646,8 @@ function AgentRuntimeBar({ runtime, onOpenAudit, onOpenEmbed }) {
     { code: 'G1', label: '需求理解', status: serviceStatus, state: connected ? 'live' : checking ? 'checking' : 'offline' },
     { code: 'G2', label: '岗位方案', status: connected ? '规则生成' : serviceStatus, state: connected ? 'live' : checking ? 'checking' : 'offline' },
     { code: 'G3', label: '人才匹配', status: connected ? '固定评分' : serviceStatus, state: connected ? 'live' : checking ? 'checking' : 'offline' },
-    { code: 'G4', label: '面试协同', status: '本地演示', state: 'planned' },
-    { code: 'G5', label: '综合评价', status: '本地演示', state: 'planned' },
+    { code: 'G4', label: '面试协同', status: '接口预留', state: 'planned' },
+    { code: 'G5', label: '综合评价', status: '后续能力', state: 'planned' },
   ];
   return (
     <section className={classNames('agent-runtime-bar', runtime.status)} aria-label="招聘智能体能力与运行状态">
@@ -659,14 +664,37 @@ function AgentRuntimeBar({ runtime, onOpenAudit, onOpenEmbed }) {
         ))}
       </div>
       <div className="agent-runtime-tools">
-        <button type="button" className="agent-embed-entry" onClick={onOpenEmbed}>
-          <ExternalLink size={15} />
-          <span><strong>ATS 嵌入协议</strong><small>SDK / API 基线</small></span>
+        <button type="button" className="agent-mode-entry" onClick={onOpenRuntime}>
+          <LayoutDashboard size={15} />
+          <span><strong>独立运行模式</strong><small>核心闭环优先</small></span>
           <ChevronRight size={14} />
         </button>
         <button type="button" className="icon-button small" title="查看运行审计" onClick={onOpenAudit}><Activity size={16} /></button>
       </div>
     </section>
+  );
+}
+
+function ReservedCapability({ type, setView }) {
+  const interview = type === 'interview';
+  const Icon = interview ? Video : BadgeCheck;
+  const details = interview
+    ? [['输入', '已人工确认的候选名单'], ['预留输出', '面试批次、邀请状态与结果版本'], ['当前边界', '不发送邀请，不调用消息或在线面试平台']]
+    : [['输入', '简历证据、推荐名单与人工意见'], ['预留输出', '综合评价版本与外部回写结果'], ['当前边界', '不生成虚构面试分或测评分']];
+  return (
+    <>
+      <PageHeader eyebrow="能力预留" title={interview ? '面试协同' : '综合评价'} description={interview ? '在线面试和消息平台将在独立智能体核心闭环验收后接入' : '综合评价将在名单确认与推荐报告完成后继续实现'}
+        actions={<button className="btn secondary" onClick={() => setView('talent')}><ArrowLeft size={16} />返回人才匹配</button>} />
+      <section className="reserved-capability">
+        <span className="reserved-capability-icon"><Icon size={26} /></span>
+        <div className="reserved-capability-copy">
+          <StatusPill tone="gray">{interview ? '接口预留' : '后续能力'}</StatusPill>
+          <h2>{interview ? '保留面试连接器边界' : '等待核心证据链完成'}</h2>
+          <p>{interview ? '当前版本只定义候选名单、面试批次、状态和结果的输入输出契约，不执行任何对外动作。' : '当前版本优先交付基于知识、简历证据和固定评分的推荐报告，不使用演示面试数据拼装综合分。'}</p>
+          <div className="reserved-capability-list">{details.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -677,8 +705,8 @@ function AppView({ view, context }) {
       {view === 'roleplan' && <RolePlan {...context} />}
       {view === 'tasks' && <Tasks {...context} />}
       {view === 'talent' && <Talent {...context} />}
-      {view === 'interviews' && <Interviews {...context} />}
-      {view === 'evaluation' && <Evaluation {...context} />}
+      {view === 'interviews' && <ReservedCapability type="interview" setView={context.setView} />}
+      {view === 'evaluation' && <ReservedCapability type="evaluation" setView={context.setView} />}
       {view === 'knowledge' && <Knowledge {...context} />}
       {view === 'audit' && <Audit {...context} />}
     </>
@@ -785,7 +813,7 @@ function App() {
   const [view, setView] = useState(embedConfig.initialView);
   const [selectedCandidate, setSelectedCandidate] = useState(() => loadAppState('smartai.selectedCandidate', 1));
   const [knowledge, setKnowledge] = useState(() => loadAppState('smartai.knowledge', knowledgeSeed));
-  const [events, setEvents] = useState(() => loadAppState('smartai.events', initialEvents));
+  const [events, setEvents] = useState(() => normalizeStoredEvents(loadAppState('smartai.events', initialEvents)));
   const [tasks, setTasks] = useState(() => normalizeStoredTasks(loadAppState('smartai.recruitmentTasks', initialTasks)));
   const [activeTaskId, setActiveTaskId] = useState(() => loadAppState('smartai.activeTaskId', initialTasks[0].code));
   const [candidateSelections, setCandidateSelections] = useState(() => {
@@ -793,13 +821,6 @@ function App() {
     const normalized = Array.isArray(stored) ? { [initialTasks[0].code]: stored } : stored;
     return { ...initialCandidateSelections, ...normalized };
   });
-  const [interviewStatusByTask, setInterviewStatusByTask] = useState(() => {
-    const stored = loadAppState('smartai.interviewStatuses', {});
-    const legacy = stored && Object.values(stored).some((value) => typeof value === 'string');
-    const normalized = legacy ? { [initialTasks[0].code]: stored } : stored;
-    return { ...initialInterviewStatuses, ...normalized };
-  });
-  const [evaluationDecisions, setEvaluationDecisions] = useState(() => loadAppState('smartai.evaluationDecisions', {}));
   const [matchStrategy, setMatchStrategy] = useState(() => loadAppState('smartai.matchStrategy', { minScore: 70, sort: 'score', 核心技术能力: 30, 治理专业能力: 30, 核心专业能力: 30, 项目复杂度: 30, 行业与业务: 20, 业务与行业: 20, 成果证据: 20 }));
   const [notifications, setNotifications] = useState(() => loadAppState('smartai.notifications', initialNotifications));
   const [toast, setToast] = useState('');
@@ -842,7 +863,6 @@ function App() {
   }, [activeTask, matchStrategy]);
   const candidate = candidatePool.find((item) => item.id === selectedCandidate) || candidatePool[0];
   const selectedCandidates = candidateSelections[activeTask?.code] || [];
-  const interviewStatuses = interviewStatusByTask[activeTask?.code] || {};
   const flowStep = stageIndex(activeTask?.stage);
 
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
@@ -850,14 +870,6 @@ function App() {
   function setSelectedCandidates(update) {
     setCandidateSelections((all) => {
       const current = all[activeTask.code] || [];
-      const next = typeof update === 'function' ? update(current) : update;
-      return { ...all, [activeTask.code]: next };
-    });
-  }
-
-  function setInterviewStatuses(update) {
-    setInterviewStatusByTask((all) => {
-      const current = all[activeTask.code] || {};
       const next = typeof update === 'function' ? update(current) : update;
       return { ...all, [activeTask.code]: next };
     });
@@ -872,8 +884,6 @@ function App() {
   useEffect(() => persistAppState('smartai.knowledge', knowledge), [knowledge, embedConfig.isEmbedded]);
   useEffect(() => persistAppState('smartai.events', events), [events, embedConfig.isEmbedded]);
   useEffect(() => persistAppState('smartai.activeTaskId', activeTaskId), [activeTaskId, embedConfig.isEmbedded]);
-  useEffect(() => persistAppState('smartai.interviewStatuses', interviewStatusByTask), [interviewStatusByTask, embedConfig.isEmbedded]);
-  useEffect(() => persistAppState('smartai.evaluationDecisions', evaluationDecisions), [evaluationDecisions, embedConfig.isEmbedded]);
   useEffect(() => persistAppState('smartai.matchStrategy', matchStrategy), [matchStrategy, embedConfig.isEmbedded]);
   useEffect(() => persistAppState('smartai.notifications', notifications), [notifications, embedConfig.isEmbedded]);
   useEffect(() => {
@@ -1424,9 +1434,9 @@ function App() {
   }
 
   function requestView(target) {
-    const requiredStep = { talent: 1, interviews: 3, evaluation: 4 }[target];
+    const requiredStep = { talent: 1 }[target];
     if (requiredStep != null && flowStep < requiredStep) {
-      notify(requiredStep === 1 ? '请先确认岗位方案' : requiredStep === 3 ? '请先完成候选名单确认' : '请先回收至少一份面试结果');
+      notify('请先确认岗位方案');
       return;
     }
     setView(target);
@@ -1470,27 +1480,22 @@ function App() {
   }
 
   function advanceFlow() {
-    if (activeTask.stage === '已完成') {
-      setView('evaluation');
-      notify('该招聘任务已完成');
+    if (activeTask.stage === '名单确认') {
+      setView('talent');
+      notify('请在人才匹配中核对并保存推荐名单草稿');
       return;
     }
     const target = nextStage(activeTask.stage);
-    const progressMap = { 人才搜索: 30, 名单确认: 48, 在线面试: 66, 综合评价: 86, 已完成: 100 };
-    updateActiveTask({ stage: target, progress: progressMap[target], tone: target === '在线面试' ? 'amber' : target === '已完成' ? 'green' : 'blue' });
+    const progressMap = { 人才搜索: 30, 名单确认: 48 };
+    updateActiveTask({ stage: target, progress: progressMap[target], tone: 'blue' });
     const messages = {
       人才搜索: ['岗位方案已确认', '智能体开始检索集团人才库'],
       名单确认: ['人才搜索已完成', '已生成候选人匹配排序，等待人工确认'],
-      在线面试: ['候选名单已确认', `已向 ${selectedCandidates.length} 位候选人发起在线面试`],
-      综合评价: ['面试结果已汇总', '已生成候选人综合评价报告'],
-      已完成: ['招聘评价已归档', '任务已完成并进入结果回流阶段'],
     };
     const [title, detail] = messages[target];
     pushEvent(title, detail, target === '名单确认' ? 'success' : 'human');
     notify(title);
     if (target === '人才搜索' || target === '名单确认') setView('talent');
-    if (target === '在线面试') setView('interviews');
-    if (target === '综合评价' || target === '已完成') setView('evaluation');
   }
 
   function toggleCandidate(id) {
@@ -1577,7 +1582,6 @@ function App() {
     };
     setTasks((items) => [task, ...items]);
     setCandidateSelections((items) => ({ ...items, [code]: [] }));
-    setInterviewStatusByTask((items) => ({ ...items, [code]: {} }));
     setActiveTaskId(code);
     setTaskModalOpen(false);
     setView('roleplan');
@@ -1639,10 +1643,6 @@ function App() {
     archiveTask,
     restoreTask,
     events,
-    interviewStatuses,
-    setInterviewStatuses,
-    evaluationDecisions,
-    setEvaluationDecisions,
     matchStrategy,
     setMatchStrategy,
     notifications,
@@ -1662,7 +1662,7 @@ function App() {
       {!embedConfig.isEmbedded && <Sidebar view={view} setView={requestView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />}
       <div className="app-column">
         {!embedConfig.isEmbedded && <Topbar setView={requestView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />}
-        {!embedConfig.isEmbedded && <AgentRuntimeBar runtime={agentRuntime} onOpenAudit={() => requestView('audit')} onOpenEmbed={() => openDialog('embed-info')} />}
+        {!embedConfig.isEmbedded && <AgentRuntimeBar runtime={agentRuntime} onOpenAudit={() => requestView('audit')} onOpenRuntime={() => openDialog('runtime-info')} />}
         {embedConfig.isEmbedded && <HostContextBar context={hostContext} activeTask={activeTask} candidate={candidate} status={embedStatus} surface={embedConfig.surface} onOpenWorkspace={() => requestHostNavigation('open_workspace')} onReturnToHost={() => window.parent === window ? openStandalone() : requestHostNavigation('return_to_context')} />}
         <main className={classNames('main-content', `view-${view}`, embedConfig.surface === 'sidebar' && 'embed-sidebar-main')}>
           {embedConfig.isEmbedded && !hostContext
@@ -1740,7 +1740,7 @@ function NavItem({ item, active, onClick }) {
     <button className={classNames('nav-item', active && 'active')} onClick={onClick} aria-label={item.label}>
       <Icon size={18} />
       <span>{item.label}</span>
-      {item.count && <em>{item.count}</em>}
+      {item.note ? <em className="nav-note">{item.note}</em> : item.count ? <em>{item.count}</em> : null}
     </button>
   );
 }
@@ -1879,7 +1879,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           {flowStep < 2 ? (
             <div className="workspace-gate">
               <span className={classNames('workspace-gate-icon', flowStep === 1 && 'searching')}>{flowStep === 0 ? <FileText size={26} /> : <Search size={26} />}</span>
-              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : serviceNeedsMatch ? 'G3 服务端能力' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : serviceMatchEmpty ? '上次匹配没有结果' : serviceNeedsMatch ? '候选匹配已就绪' : '人才匹配已完成'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : serviceMatchEmpty ? '上次运行扫描数为 0，任务不会自动推进。请重新导入演示样本并运行 G3。' : serviceNeedsMatch ? '可先用虚构候选样本验证标准化输入、硬条件过滤、固定评分和证据解释；接入 ATS 时仅替换候选输入适配器。' : `已应用“${activeTask.role}评分卡”完成固定评分和证据映射。`}</p></div>
+              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : serviceNeedsMatch ? 'G3 服务端能力' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : serviceMatchEmpty ? '上次匹配没有结果' : serviceNeedsMatch ? '候选匹配已就绪' : '人才匹配已完成'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : serviceMatchEmpty ? '上次运行扫描数为 0，任务不会自动推进。请重新导入演示样本并运行 G3。' : serviceNeedsMatch ? '可先用虚构候选样本验证标准化输入、硬条件过滤、固定评分和证据解释；当前将继续完善独立简历库，外部候选来源仅保留适配接口。' : `已应用“${activeTask.role}评分卡”完成固定评分和证据映射。`}</p></div>
               <div className="workspace-gate-meta"><span><ShieldCheck size={15} />{serviceNeedsMatch ? 'G1/G2 已服务端确认' : '岗位方案与规则版本已绑定'}</span><span><History size={15} />{serviceMatchEmpty ? '保留上次空结果运行记录' : serviceNeedsMatch ? '等待运行演示输入适配器' : 'G3 结果已写入运行审计'}</span></div>
               {flowStep === 0 ? <button className="btn primary" onClick={() => setView('roleplan')}>审核岗位方案 <ArrowRight size={17} /></button> : serviceNeedsMatch ? <button className="btn primary" onClick={() => setView('talent')}>{serviceMatchEmpty ? '重新运行 G3' : '运行 G3 匹配'} <ArrowRight size={16} /></button> : <button className="btn secondary" onClick={() => setView('audit')}>查看运行记录 <Activity size={16} /></button>}
             </div>
@@ -1907,7 +1907,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
             ))}
           </div>
           <div className="decision-bar">
-            <div><UserCheck size={20} /><span><strong>需要你的确认</strong><small>智能体建议邀请前 3 位候选人进入在线面试</small></span></div>
+            <div><UserCheck size={20} /><span><strong>需要你的确认</strong><small>智能体建议将前 3 位候选人加入推荐名单，并生成可追溯报告</small></span></div>
             <button className="btn primary" onClick={() => setView('talent')}>前往确认 {selectedCandidates.length} 人 <ArrowRight size={17} /></button>
           </div>
           </>}
@@ -2442,11 +2442,11 @@ function GlobalSearch({ tasks, candidates, knowledge, onClose, onNavigate }) {
 }
 
 function DetailDialog({ dialog, onClose, context }) {
-  const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy, setInterviewStatuses, toggleCandidate } = context;
-  if (dialog.type === 'help') return <DialogShell title="演示帮助中心" eyebrow="产品帮助" onClose={onClose}><div className="help-grid"><div><span>01</span><strong>创建招聘任务</strong><p>录入需求后，智能体会生成岗位方案、评分卡和知识引用。</p></div><div><span>02</span><strong>确认人才名单</strong><p>查看候选人匹配证据，调整策略并选择进入面试的人选。</p></div><div><span>03</span><strong>模拟面试闭环</strong><p>发送提醒、回收结果、查看转写和综合评价。</p></div><div><span>04</span><strong>维护企业知识</strong><p>新增、复核和归档岗位知识、人才画像与制度流程。</p></div></div><div className="dialog-note"><ShieldCheck size={17} />演示数据均为虚构数据，所有修改仅保存在当前浏览器。</div></DialogShell>;
-  if (dialog.type === 'embed-info') return <DialogShell title="ATS 嵌入协议基线" eyebrow="集成边界" onClose={onClose}><div className="rule-dialog-list">{[['宿主输入','租户、岗位、候选人和当前用户上下文'],['智能体输入','招聘需求、岗位方案版本、候选简历版本'],['智能体输出','任务、岗位方案、匹配结果与人工确认点'],['集成方式','Embed SDK、Core API 与事件回调契约']].map(([title, text]) => <div key={title}><span><ExternalLink size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div><div className="dialog-note"><AlertTriangle size={17} />当前完成的是协议与宿主演示基线；客户 ATS 认证、生产连接器及 G4/G5 服务仍需按项目接入。</div></DialogShell>;
+  const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy } = context;
+  if (dialog.type === 'help') return <DialogShell title="演示帮助中心" eyebrow="产品帮助" onClose={onClose}><div className="help-grid"><div><span>01</span><strong>创建招聘任务</strong><p>录入需求后，智能体会生成岗位方案、评分卡和知识引用。</p></div><div><span>02</span><strong>确认人才名单</strong><p>查看候选人匹配证据，调整策略并形成推荐名单。</p></div><div><span>03</span><strong>生成推荐结果</strong><p>保存候选名单草稿，后续生成服务端确认版本和推荐报告。</p></div><div><span>04</span><strong>维护企业知识</strong><p>新增、复核和归档岗位知识、人才画像与制度流程。</p></div></div><div className="dialog-note"><ShieldCheck size={17} />演示数据均为虚构数据，所有修改仅保存在当前浏览器。</div></DialogShell>;
+  if (dialog.type === 'runtime-info') return <DialogShell title="独立招聘智能体" eyebrow="当前产品主线" onClose={onClose}><div className="rule-dialog-list">{[['需求与岗位','通过自然语言整理招聘需求，生成岗位方案和评分标准'],['企业知识','维护历史 JD、用人标准和人才画像，记录版本与引用'],['人才匹配','在独立简历库中完成硬条件过滤、固定评分和证据解释'],['人工确认','确认岗位方案与候选名单，导出可追溯的推荐结果']].map(([title, text]) => <div key={title}><span><Bot size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div><div className="dialog-note"><AlertTriangle size={17} />ATS 与在线面试平台当前仅保留接口契约和扩展点，不参与本阶段功能验收。</div></DialogShell>;
   if (dialog.type === 'enterprise') return <DialogShell title="企业空间" eyebrow="当前租户" onClose={onClose}><div className="enterprise-dialog"><span className="enterprise-logo"><Building2 size={23} /></span><div><strong>华岳能源集团</strong><p>集团招聘智能体演示环境</p></div></div><div className="detail-list"><div><span>组织范围</span><strong>集团总部及 12 家下属企业</strong></div><div><span>数据环境</span><strong>演示数据 · 本地存储</strong></div><div><span>知识权限</span><strong>组织人事部 / 招聘中心</strong></div></div><div className="dialog-note"><LockKeyhole size={17} />正式接入客户系统后，企业空间将隔离任务、人才与知识数据。</div></DialogShell>;
-  if (dialog.type === 'rules') return <DialogShell title="智能体执行边界" eyebrow="安全与治理" onClose={onClose}><div className="rule-dialog-list">{[['允许自动执行','人才检索、评分计算、邀约提醒、结果回收、报告草拟'],['必须人工确认','岗位发布、候选名单、淘汰决定、录用决定、Offer审批'],['禁止使用','年龄、性别、婚育、籍贯等与岗位胜任无关的敏感属性'],['全程留痕','知识引用、评分证据、人工修改和对外操作均记录审计日志']].map(([title, text], index) => <div key={title}><span>{index < 2 ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}</span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
+  if (dialog.type === 'rules') return <DialogShell title="智能体执行边界" eyebrow="安全与治理" onClose={onClose}><div className="rule-dialog-list">{[['允许自动执行','需求解析、知识检索、候选评分和报告草拟'],['必须人工确认','岗位发布、候选名单、淘汰决定、录用决定、Offer审批'],['禁止使用','年龄、性别、婚育、籍贯等与岗位胜任无关的敏感属性'],['全程留痕','知识引用、评分证据、人工修改和对外操作均记录审计日志']].map(([title, text], index) => <div key={title}><span>{index < 2 ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}</span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
   if (dialog.type === 'governance') return <DialogShell title="知识治理规则" eyebrow="知识库管理" onClose={onClose}><div className="rule-dialog-list">{[['上传检查','识别候选人隐私、敏感属性、重复资料和文件有效期'],['解析复核','新资料默认进入待复核状态，确认后才参与智能体检索'],['版本管理','保留资料版本、维护部门、更新时间和引用记录'],['画像约束','只使用能力与行为证据，不使用受保护或非岗位相关属性']].map(([title, text]) => <div key={title}><span><ShieldCheck size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
   if (dialog.type === 'task-edit') { const task = dialog.task || activeTask; return <TaskEditDialog task={task} onClose={onClose} onSave={(changes) => { updateTask(task.code, changes); onClose(); }} onArchive={() => task.archived ? restoreTask(task.code) : archiveTask(task.code)} />; }
   if (dialog.type === 'knowledge') return <KnowledgeDetailDialog item={dialog.item} onClose={onClose} onSave={(changes) => { updateKnowledge(dialog.item.id, { ...changes, updated: localDateString() }); pushEvent('更新知识资料', `${changes.title || dialog.item.title} 已保存新版本`, 'human'); notify('知识资料已更新'); onClose(); }} onArchive={() => dialog.item.archived ? restoreKnowledge(dialog.item.id) : removeKnowledge(dialog.item.id)} />;
@@ -2460,21 +2460,8 @@ function DetailDialog({ dialog, onClose, context }) {
     onClose();
   }} />;
   if (dialog.type === 'strategy') return <MatchStrategyDialog task={activeTask} strategy={matchStrategy} onClose={onClose} onSave={(strategy) => { setMatchStrategy(strategy); pushEvent('调整人才匹配策略', `已更新最低匹配阈值 ${strategy.minScore} 分和评分维度权重`, 'human'); notify('匹配策略已保存'); onClose(); }} />;
-  if (dialog.type === 'interview-actions') return <InterviewActionDialog person={dialog.person} done={dialog.done} onClose={onClose} onRemind={() => { pushEvent('发送面试提醒', `已向 ${dialog.person.name} 发送在线面试提醒`, 'success'); notify('面试提醒已发送'); }} onDeadline={() => context.openDialog('interview-deadline', { person: dialog.person })} onWithdraw={() => { toggleCandidate(dialog.person.id); setInterviewStatuses((items) => ({ ...items, [dialog.person.id]: '已撤回' })); pushEvent('撤回面试邀请', `${dialog.person.name} 已移出当前面试批次`, 'human'); notify('面试邀请已撤回'); onClose(); }} onTranscript={() => context.openDialog('transcript', { person: dialog.person })} />;
-  if (dialog.type === 'interview-deadline') return <InterviewDeadlineDialog person={dialog.person} deadline={activeTask.interviewDeadline} onClose={onClose} onSave={(deadline) => { updateActiveTask({ interviewDeadline: deadline }); pushEvent('更新面试截止时间', `${dialog.person.name} 的面试截止时间调整为 ${deadline}`, 'human'); notify('面试截止时间已更新并通知候选人'); onClose(); }} />;
-  if (dialog.type === 'evidence') return <DialogShell title={`${dialog.label} · 评价证据`} eyebrow="可解释评价" onClose={onClose}><div className="evidence-dialog"><div className="evidence-dialog-score"><strong>{dialog.score}</strong><span>/100</span><StatusPill tone="green">证据充分</StatusPill></div><blockquote>“{dialog.quote || '候选人在回答中给出了明确的情境、行动和量化结果，能够支持该项评分。'}”</blockquote><div className="detail-list"><div><span>评价来源</span><strong>{dialog.source || '结构化评价标准'}</strong></div><div><span>评价方式</span><strong>固定规则评分 + AI证据提取</strong></div><div><span>人工复核</span><strong>待招聘经理确认</strong></div></div></div></DialogShell>;
-  if (dialog.type === 'transcript') { const person = dialog.person || context.candidate || candidatesSeed[0]; return <DialogShell title={`${person.name} · 在线面试完整记录`} eyebrow="面试转写" onClose={onClose} wide><div className="transcript-list">{[['00:42','面试智能体','请介绍一次你主导的复杂项目，以及你承担的关键职责。'],['01:03',person.name,person.evidence[0]?.quote || '候选人结合项目背景说明了关键行动与成果。'],['03:18','面试智能体','项目推进过程中最大的风险是什么？你如何控制？'],['03:31',person.name,person.evidence[1]?.quote || '候选人说明了风险识别、协同推进和结果复盘过程。']].map(([time, speaker, text]) => <div key={time}><time>{time}</time><span><strong>{speaker}</strong><p>{text}</p></span></div>)}</div></DialogShell>; }
   if (dialog.type === 'audit') return <DialogShell title={dialog.event.title} eyebrow="审计详情" onClose={onClose}><div className="detail-list"><div><span>任务编号</span><strong>{dialog.event.taskId || '-'}</strong></div><div><span>执行主体</span><strong>{dialog.event.actor || '招聘执行智能体'}</strong></div><div><span>执行时间</span><strong>{dialog.event.date || '2026-07-22'} {dialog.event.time}</strong></div><div><span>输入</span><strong>{dialog.event.input || dialog.event.detail}</strong></div><div><span>输出</span><strong>{dialog.event.output || dialog.event.detail}</strong></div><div><span>策略校验</span><strong className="success-text">通过 · 未触发敏感规则</strong></div></div></DialogShell>;
   return null;
-}
-
-function InterviewActionDialog({ person, done, onClose, onRemind, onDeadline, onWithdraw, onTranscript }) {
-  return <DialogShell title={`${person.name} · 面试操作`} eyebrow="在线面试" onClose={onClose} actions={<button className="btn secondary" onClick={onClose}>关闭</button>}><div className="interview-action-dialog"><div className="person-identity"><span className="avatar avatar-large">{person.initials}</span><div><h3>{person.name}</h3><p>{person.title} · {person.company}</p></div></div><div className="action-menu-list">{done ? <button onClick={onTranscript}><Video size={17} /><span><strong>查看完整转写</strong><small>查看回答、时间轴和结构化评价证据</small></span><ArrowRight size={16} /></button> : <button onClick={onRemind}><Send size={17} /><span><strong>发送面试提醒</strong><small>通过默认渠道重新提醒候选人完成作答</small></span><ArrowRight size={16} /></button>}<button onClick={onDeadline}><CalendarDays size={17} /><span><strong>更新截止时间</strong><small>设置新的作答截止时间并通知候选人</small></span><ArrowRight size={16} /></button><button className="destructive-action" onClick={onWithdraw}><Archive size={17} /><span><strong>撤回面试邀请</strong><small>从当前批次移除该候选人，不会删除简历档案</small></span><ArrowRight size={16} /></button></div></div></DialogShell>;
-}
-
-function InterviewDeadlineDialog({ person, deadline, onClose, onSave }) {
-  const [value, setValue] = useState(deadline || '2026-07-25');
-  return <DialogShell title="更新面试截止时间" eyebrow={person.name} onClose={onClose} actions={<><button className="btn secondary" onClick={onClose}>取消</button><button className="btn primary" disabled={!value} onClick={() => onSave(value)}><Send size={16} />保存并通知</button></>}><div className="dialog-form deadline-dialog"><label><span>新的截止日期</span><input autoFocus type="date" value={value} onInput={(event) => setValue(event.currentTarget.value)} /></label><div className="dialog-note"><CalendarDays size={17} />保存后将生成操作记录，并模拟向候选人发送新的截止时间通知。</div></div></DialogShell>;
 }
 
 function RoleScorecardDialog({ task, onClose, onSave }) {
@@ -2585,7 +2572,7 @@ function ScorecardDetail({ task, strategy }) {
   return <><div className="scorecard-total"><span>总分</span><strong>100</strong><small>规则由招聘负责人维护，AI仅提取证据</small></div><div className="score-rule-list dialog-rules">{plan.scoreRules.map((rule) => { const weight = strategy?.[rule.label] ?? rule.weight; return <div className="score-rule" key={rule.label}><span className="rule-weight">{weight}<small>%</small></span><div><strong>{rule.label}</strong><p>{rule.detail}</p><i><b style={{ width: `${weight}%` }} /></i></div></div>; })}</div><div className="dialog-note"><ShieldCheck size={17} />每项得分必须关联简历或面试原文；信息不足时标记待核实，不自动推断。</div></>;
 }
 
-function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, candidatePool, toggleCandidate, setView, notify, pushEvent, activeTask, updateActiveTask, setInterviewStatuses, matchStrategy, openDialog, knowledge, getAccessToken }) {
+function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, candidatePool, toggleCandidate, setView, notify, pushEvent, activeTask, updateActiveTask, matchStrategy, openDialog, knowledge, getAccessToken }) {
   const [query, setQuery] = useState('');
   const [minScore, setMinScore] = useState(matchStrategy.minScore || 70);
   const [onlySelected, setOnlySelected] = useState(false);
@@ -2595,7 +2582,6 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
   const selected = candidatePool.find((item) => item.id === selectedCandidate) || candidatePool[0];
   const serviceMatchNotStarted = activeTask.creationMode === 'service' && activeTask.planConfirmed && !activeTask.serviceMatchRun;
   const serviceMatchEmpty = activeTask.creationMode === 'service' && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
-  const serviceDownstreamDemo = activeTask.creationMode === 'service';
   const filteredCandidates = useMemo(() => candidatePool.filter((person) => person.score >= Number(minScore) && (!onlySelected || selectedCandidates.includes(person.id)) && `${person.name}${person.title}${person.company}${person.highlights.join('')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => matchStrategy.sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : b.score - a.score), [candidatePool, query, minScore, onlySelected, selectedCandidates, matchStrategy.sort]);
   useEffect(() => setMinScore(matchStrategy.minScore || 70), [matchStrategy.minScore]);
 
@@ -2654,7 +2640,7 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
 
   function confirmSelection() {
     if (!activeTask.planConfirmed && activeTask.stage === '岗位方案') {
-      notify('请先确认岗位方案，再发起人才面试');
+      notify('请先确认岗位方案，再确认推荐名单');
       setView('roleplan');
       return;
     }
@@ -2662,26 +2648,18 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
       notify('请至少选择一位候选人');
       return;
     }
-    if (serviceDownstreamDemo) {
-      updateActiveTask({ demoCandidateSelectionConfirmed: true });
-      pushEvent('保存 G4 演示名单', `本地保存 ${selectedCandidates.length} 位候选人的选择；未创建服务端名单或面试邀请`, 'human');
-      notify('候选选择已保存；G4 名单确认与面试服务尚未接入');
-      return;
-    }
-    setInterviewStatuses((items) => ({ ...items, ...Object.fromEntries(selectedCandidates.map((id) => [id, items[id] || '待作答'])) }));
-    updateActiveTask({ stage: '在线面试', progress: 66, tone: 'amber' });
-    pushEvent('候选名单已确认', `人工确认 ${selectedCandidates.length} 位候选人进入在线面试`);
-    notify('候选名单已确认，面试邀请已创建');
-    setView('interviews');
+    updateActiveTask({ demoCandidateSelectionConfirmed: true });
+    pushEvent('保存推荐名单草稿', `本地保存 ${selectedCandidates.length} 位候选人的选择；未创建服务端确认版本或执行外部动作`, 'human');
+    notify('推荐名单草稿已保存；服务端确认与推荐报告将在下一阶段实现');
   }
   return (
     <>
       <PageHeader eyebrow={`${activeTask.code} / 人才搜索`} title="人才匹配" description={serviceMatchNotStarted ? '岗位方案已批准，等待运行 G3 标准化候选输入、硬条件过滤、固定评分和证据解释' : activeTask.serviceMatchRun ? `G3 服务端匹配已完成 · ${activeTask.serviceMatchRun.pipelineVersion}` : `基于“${activeTask.role}”岗位方案的候选人排序`}
         actions={serviceMatchNotStarted || serviceMatchEmpty
           ? <button className="btn primary" disabled={matchPending} onClick={runServiceMatch}>{matchPending ? <RefreshCw size={17} /> : <Play size={17} />}{matchPending ? '正在执行 G3' : serviceMatchEmpty ? '重新运行 G3' : '运行 G3 匹配'}</button>
-          : <button className="btn primary" disabled={!candidatePool.length} onClick={confirmSelection}><Save size={17} />{serviceDownstreamDemo ? '保存演示选择' : '确认名单并发起面试'}</button>} />
-      {(serviceMatchNotStarted || serviceMatchEmpty) && <section className="agent-boundary-notice"><ShieldCheck size={18} /><div><strong>{serviceMatchEmpty ? '上次运行没有检索到候选人' : 'G3 智能体服务已就绪'}</strong><p>{serviceMatchEmpty ? '可以重新导入虚构候选样本并执行匹配；服务会创建新的 MatchRun，保留上次运行记录。' : '本次将导入 12 位明确标记的虚构候选样本，真实执行候选规范化、硬条件过滤、固定评分、证据定位和结果审计；接入 ATS 时由客户候选接口替换输入适配器。'}</p></div></section>}
-      {activeTask.serviceMatchRun && !serviceMatchEmpty && <section className="agent-boundary-notice success"><CheckCircle2 size={18} /><div><strong>当前候选排序来自 G3 服务端</strong><p>结果绑定岗位方案、评分卡和简历版本。G4 名单确认与面试编排尚未后端化，页面只保存演示选择，不会发送邀请。</p></div></section>}
+          : <button className="btn primary" disabled={!candidatePool.length} onClick={confirmSelection}><Save size={17} />保存推荐名单草稿</button>} />
+      {(serviceMatchNotStarted || serviceMatchEmpty) && <section className="agent-boundary-notice"><ShieldCheck size={18} /><div><strong>{serviceMatchEmpty ? '上次运行没有检索到候选人' : 'G3 智能体服务已就绪'}</strong><p>{serviceMatchEmpty ? '可以重新导入虚构候选样本并执行匹配；服务会创建新的 MatchRun，保留上次运行记录。' : '本次将导入 12 位明确标记的虚构候选样本，真实执行候选规范化、硬条件过滤、固定评分、证据定位和结果审计；下一阶段将由独立简历库替换演示输入适配器。'}</p></div></section>}
+      {activeTask.serviceMatchRun && !serviceMatchEmpty && <section className="agent-boundary-notice success"><CheckCircle2 size={18} /><div><strong>当前候选排序来自 G3 服务端</strong><p>结果绑定岗位方案、评分卡和简历版本。名单确认与推荐报告尚未后端化，页面当前只保存名单草稿，不会执行任何外部动作。</p></div></section>}
       {matchError && <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>G3 匹配未完成</strong><small>{matchError}</small></span></div>}
       {serviceMatchNotStarted || serviceMatchEmpty ? <section className="panel workspace-gate talent-service-start">
         <span className="workspace-gate-icon searching"><Search size={26} /></span>
@@ -2757,133 +2735,8 @@ function CandidateDetail({ person, task, selected, onToggle, openDialog, notify,
           ? <button className="source-row" onClick={() => openDialog('knowledge', { item: portraitSource })}><BookOpenText size={17} /><span><strong>{portraitSource.title}</strong><small>{portraitSource.type} · {portraitSource.version} · 已引用 {portraitSource.refs} 次</small></span><Eye size={15} /></button>
           : <div className="source-row source-empty"><BookOpenText size={17} /><span><strong>暂无可用人才画像</strong><small>请先在知识库中发布人才画像资料</small></span></div>}
       </div>
-      <div className="sticky-actions"><button className="btn secondary" onClick={() => { downloadText(`${person.name}-简历.txt`, buildResumeText(person)); notify('简历已下载'); }}><Download size={16} />下载简历</button><button className={classNames('btn', selected ? 'selected-button' : 'primary')} onClick={onToggle}>{selected ? <Check size={17} /> : <Plus size={17} />}{selected ? '已加入面试名单' : '加入面试名单'}</button></div>
+      <div className="sticky-actions"><button className="btn secondary" onClick={() => { downloadText(`${person.name}-简历.txt`, buildResumeText(person)); notify('简历已下载'); }}><Download size={16} />下载简历</button><button className={classNames('btn', selected ? 'selected-button' : 'primary')} onClick={onToggle}>{selected ? <Check size={17} /> : <Plus size={17} />}{selected ? '已加入推荐名单' : '加入推荐名单'}</button></div>
     </section>
-  );
-}
-
-function Interviews({ selectedCandidates, candidatePool, selectedCandidate, setSelectedCandidate, setView, notify, pushEvent, activeTask, interviewStatuses, setInterviewStatuses, updateActiveTask, openDialog }) {
-  const interviewees = candidatePool.filter((item) => selectedCandidates.includes(item.id));
-  function collect(person) {
-    setInterviewStatuses((value) => ({ ...value, [person.id]: '已完成' }));
-    pushEvent('收到在线面试结果', `${person.name} 已完成面试，评价报告生成完毕`, 'success');
-    notify(`${person.name}的面试结果已回收`);
-  }
-  function remindAll() {
-    const pending = interviewees.filter((person) => interviewStatuses[person.id] !== '已完成');
-    if (!pending.length) return notify('当前批次已全部完成，无需提醒');
-    pushEvent('发送面试提醒', `已向 ${pending.map((person) => person.name).join('、')} 发送在线面试提醒`, 'success');
-    notify(`已提醒 ${pending.length} 位候选人`);
-  }
-  const completedCount = interviewees.filter((person) => interviewStatuses[person.id] === '已完成').length;
-  const deadline = activeTask.interviewDeadline || '2026-07-25';
-  const deadlineLabel = interviewees.length ? `${deadline.slice(5, 7)}月${deadline.slice(8, 10)}日` : '待创建';
-  function openEvaluation(personId = selectedCandidate) {
-    if (!completedCount) {
-      notify('至少需要回收一份面试结果后才能生成综合评价');
-      return;
-    }
-    const firstCompleted = interviewees.find((person) => interviewStatuses[person.id] === '已完成');
-    const requested = interviewees.find((person) => person.id === personId && interviewStatuses[person.id] === '已完成');
-    setSelectedCandidate((requested || firstCompleted).id);
-    if (activeTask.stage !== '综合评价' && activeTask.stage !== '已完成') {
-      updateActiveTask({ stage: '综合评价', progress: 86, tone: 'blue' });
-      pushEvent('生成综合评价', `已汇总 ${completedCount} 位候选人的简历与面试证据`, 'success');
-    }
-    setView('evaluation');
-  }
-  return (
-    <>
-      <PageHeader eyebrow={`${activeTask.code} / 在线面试`} title="面试协同" description="智能体负责邀约、提醒、结果回收与结构化评价；招聘负责人掌握关键决策"
-        actions={<button className="btn primary" disabled={!completedCount} title={completedCount ? '查看综合评价' : '至少完成一位候选人的面试后可用'} onClick={() => openEvaluation()}><BadgeCheck size={17} />查看综合评价</button>} />
-      <div className="interview-overview">
-        <div><span className="overview-icon blue"><Send size={19} /></span><span><small>已发送邀请</small><strong>{interviewees.length}</strong></span></div>
-        <div><span className="overview-icon green"><CheckCircle2 size={19} /></span><span><small>已完成</small><strong>{completedCount}</strong></span></div>
-        <div><span className="overview-icon amber"><Clock3 size={19} /></span><span><small>待作答</small><strong>{interviewees.length - completedCount}</strong></span></div>
-        <div><span className="overview-icon gray"><CalendarDays size={19} /></span><span><small>最晚完成</small><strong className="date-strong">{deadlineLabel}</strong></span></div>
-      </div>
-      <section className="interview-list">
-        <div className="panel-heading"><div><span className="section-kicker">在线面试批次</span><h2>{interviewees.length ? `${activeTask.role} · 第一批次` : '尚未创建面试批次'}</h2></div><button className="btn secondary" disabled={!interviewees.length || completedCount === interviewees.length} title={!interviewees.length ? '请先确认面试候选人' : completedCount === interviewees.length ? '当前批次已全部完成' : '提醒未完成候选人'} onClick={remindAll}><Send size={16} />批量提醒</button></div>
-        {interviewees.map((person, index) => {
-          const done = interviewStatuses[person.id] === '已完成';
-          return (
-            <article className="interview-card" key={person.id}>
-              <div className="interview-person"><span className={`avatar avatar-${index + 1}`}>{person.initials}</span><span><strong>{person.name}</strong><small>{person.title}</small></span></div>
-              <div className="interview-schedule"><span><CalendarDays size={15} />邀请时间</span><strong>2026-07-{22 - index} 14:30</strong></div>
-              <div className="interview-schedule"><span><Clock3 size={15} />答题时长</span><strong>{done ? '26 分 18 秒' : '限时 40 分钟'}</strong></div>
-              <div><StatusPill tone={done ? 'green' : 'amber'}>{done ? '评价已生成' : '等待候选人'}</StatusPill></div>
-              <div className="interview-action">
-                {done ? <button className="btn secondary" onClick={() => openEvaluation(person.id)}><Eye size={16} />查看评价</button> : <button className="btn secondary" onClick={() => collect(person)}><Play size={16} />模拟完成</button>}
-                <button className="icon-button small" title="面试操作" onClick={() => openDialog('interview-actions', { person, done })}><MoreHorizontal size={17} /></button>
-              </div>
-            </article>
-          );
-        })}
-        {!interviewees.length && <div className="empty-state interview-empty"><UsersRound size={24} /><strong>尚未选择面试候选人</strong><span>请先在人才匹配页面确认候选名单。</span><button className="btn primary" onClick={() => setView('talent')}>前往人才匹配</button></div>}
-      </section>
-      <section className="guardrail-band"><LockKeyhole size={20} /><div><strong>智能体执行边界</strong><p>邀请发送、状态提醒和结果回收可自动完成；面试评价仅作为决策参考，进入下一轮与最终录用必须由招聘负责人确认。</p></div><button className="text-button" onClick={() => openDialog('rules')}>查看规则</button></section>
-    </>
-  );
-}
-
-function Evaluation({ setView, notify, pushEvent, activeTask, candidatePool, selectedCandidate, setSelectedCandidate, selectedCandidates, interviewStatuses, evaluationDecisions, setEvaluationDecisions, updateActiveTask, openDialog }) {
-  const eligible = candidatePool.filter((item) => selectedCandidates.includes(item.id) && interviewStatuses[item.id] === '已完成');
-  const person = eligible.find((item) => item.id === selectedCandidate) || eligible[0];
-  if (!person) {
-    return <><PageHeader eyebrow={`${activeTask.code} / 综合评价`} title="候选人综合评价" description="面试结果回收后，智能体将在这里生成可解释的综合评价" /><section className="empty-state interview-empty evaluation-empty"><BadgeCheck size={24} /><strong>暂无可评价的候选人</strong><span>请先完成至少一位候选人的在线面试。</span><button className="btn primary" onClick={() => setView('interviews')}>返回面试协同</button></section></>;
-  }
-  const decisionKey = `${activeTask.code}-${person.id}`;
-  const decision = evaluationDecisions[decisionKey];
-  const resumeScore = person.score;
-  const interviewScore = Math.max(75, person.score - 4);
-  const assessmentScore = Math.max(75, person.score - 3);
-  const finalScore = Math.round(resumeScore * 0.4 + interviewScore * 0.35 + assessmentScore * 0.25);
-  const advice = finalScore >= 88 ? '建议进入下一轮' : finalScore >= 80 ? '建议复核后推进' : '建议重点复核';
-  function decide(result) {
-    setEvaluationDecisions((items) => ({ ...items, [decisionKey]: result }));
-    const allResolved = selectedCandidates.every((id) => interviewStatuses[id] === '已完成' && (id === person.id || evaluationDecisions[`${activeTask.code}-${id}`]));
-    updateActiveTask({ stage: allResolved ? '已完成' : '综合评价', progress: allResolved ? 100 : 86, tone: allResolved ? 'green' : 'blue' });
-    pushEvent('综合评价已确认', `招聘经理确认 ${person.name}：${result}`, 'human');
-    notify(allResolved ? '本批次评价已全部确认，任务已完成' : `${person.name}的评价结论已保存`);
-  }
-  function exportReport() {
-    downloadText(`${activeTask.code}-${person.name}-综合评价报告.txt`, [`${activeTask.role} · 候选人综合评价报告`, `候选人：${person.name}`, `综合评分：${finalScore} / 100`, '', `简历匹配：${resumeScore} / 100`, `AI在线面试：${interviewScore} / 100`, `能力测评：${assessmentScore} / 100`, '', '综合结论', `${person.highlights.join('、')}等证据与岗位要求匹配；${person.risks.join('、')}需要在下一轮进一步核实。`, '', `决策状态：${decision || '待招聘负责人确认'}`].join('\n'));
-    notify('综合评价报告已导出');
-  }
-  return (
-    <>
-      <PageHeader eyebrow={`${activeTask.code} / 综合评价`} title="候选人综合评价" description="汇总简历匹配、在线面试与人工评价，结论可解释、可复核"
-        actions={<><button className="btn secondary" onClick={exportReport}><Download size={16} />导出报告</button><button className="btn primary" onClick={() => decide('进入下一轮')}>{decision === '进入下一轮' ? <Check size={17} /> : <UserCheck size={17} />}{decision === '进入下一轮' ? '已确认进入下一轮' : '确认进入下一轮'}</button></>} />
-      {eligible.length > 1 && <div className="evaluation-candidates">{eligible.map((item) => <button className={item.id === person.id ? 'active' : ''} onClick={() => setSelectedCandidate(item.id)} key={item.id}><span className="avatar">{item.initials}</span><span><strong>{item.name}</strong><small>{item.score} 分</small></span></button>)}</div>}
-      <section className="evaluation-hero">
-        <div className="eval-person"><span className="avatar avatar-large">{person.initials}</span><div><h2>{person.name}</h2><p>{person.title} · {person.company}</p><span>候选人编号 C2026-{String(person.id).padStart(5, '0')}</span></div></div>
-        <div className="final-score"><span>综合建议</span><strong>{finalScore}<small>/100</small></strong><StatusPill tone={finalScore >= 88 ? 'green' : 'amber'}>{advice}</StatusPill></div>
-        <div className="eval-conclusion"><Sparkles size={19} /><p>{person.highlights.join('、')}等能力证据与岗位要求匹配。建议下一轮重点核实：{person.risks.join('、')}。</p></div>
-      </section>
-      <div className="evaluation-grid">
-        <section className="panel score-breakdown">
-          <div className="panel-heading"><div><span className="section-kicker">分项结果</span><h2>独立评分构成</h2></div><span className="evidence-badge"><ShieldCheck size={14} />证据覆盖率 96%</span></div>
-          {[
-            ['简历匹配', resumeScore, '岗位评分卡 v3.2', '40%', person.evidence[0]?.quote],
-            ['AI在线面试', interviewScore, '结构化面试题库 v2.1', '35%', person.evidence[1]?.quote],
-            ['能力测评', assessmentScore, '研发能力测评 v1.6', '25%', person.evidence[2]?.quote],
-          ].map(([label, score, source, weight, quote]) => (
-            <div className="breakdown-row" key={label}><span className="breakdown-score">{score}</span><div><strong>{label}</strong><small>{source} · 权重 {weight}</small><i><b style={{ width: `${score}%` }} /></i></div><button onClick={() => openDialog('evidence', { label, score, source, quote })}><Eye size={16} />查看证据</button></div>
-          ))}
-        </section>
-        <aside className="panel review-panel">
-          <div className="panel-heading"><div><span className="section-kicker">风险与复核</span><h2>需要人工关注</h2></div></div>
-          <div className="review-item amber"><CircleHelp size={18} /><div><strong>管理意愿尚未充分验证</strong><p>候选人具有带教经历，但未表达明确的团队管理意愿。</p><span>建议业务面试追问</span></div></div>
-          <div className="review-item green"><CheckCircle2 size={18} /><div><strong>未发现硬性风险</strong><p>资质、履历一致性与基础合规检查均通过。</p></div></div>
-          <div className="decision-options"><span>招聘负责人结论</span><div><button className={decision === '进入下一轮' ? 'active' : ''} onClick={() => decide('进入下一轮')}><Check size={15} />进入下一轮</button><button className={decision === '保留复核' ? 'active amber' : ''} onClick={() => decide('保留复核')}><CircleHelp size={15} />保留复核</button><button className={decision === '不进入下一轮' ? 'active red' : ''} onClick={() => decide('不进入下一轮')}><X size={15} />不进入</button></div></div>
-        </aside>
-      </div>
-      <section className="interview-evidence">
-        <div className="panel-heading"><div><span className="section-kicker">在线面试</span><h2>关键回答与评价证据</h2></div><button className="btn secondary" onClick={() => openDialog('transcript', { person })}><Video size={16} />查看完整面试</button></div>
-        <div className="qa-row"><span className="qa-index">01</span><div><strong>请介绍一次你主导的复杂项目，以及你的关键决策。</strong><blockquote>“{person.evidence[0]?.quote}”</blockquote></div><span className="qa-score">{interviewScore}<small>表达与证据</small></span></div>
-        <div className="qa-row"><span className="qa-index">02</span><div><strong>项目推进遇到风险时，你如何识别并解决？</strong><blockquote>“{person.evidence[1]?.quote}”</blockquote></div><span className="qa-score">{Math.max(75, interviewScore - 3)}<small>判断与协作</small></span></div>
-      </section>
-    </>
   );
 }
 
