@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,10 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.smartai.core.recruitment.agent.KnowledgeModels.KnowledgeDocument;
+import com.smartai.core.recruitment.agent.KnowledgeModels.KnowledgeVersion;
+import com.smartai.core.recruitment.agent.KnowledgeModels.VersionContent;
+import com.smartai.core.recruitment.agent.RequirementDraftModels.ResourceRef;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -44,6 +49,9 @@ class PositionPlanLifecycleApiTests {
 
 	@Autowired
 	JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	KnowledgeRepository knowledgeRepository;
 
 	@Test
 	void generatesEditsReviewsAndApprovesTheG2PlanExactlyOnce() throws Exception {
@@ -240,11 +248,109 @@ class PositionPlanLifecycleApiTests {
 	}
 
 	@Test
+	void preservesPublishedKnowledgeSnapshotsInRequestOrderAndReplaysGeneration() throws Exception {
+		TaskFixture fixture = createTask(null);
+		ResourceRef first = createKnowledgeVersion(
+			fixture.tenantId(), "PUBLISHED", "PARSED", "INDEXED", 3L);
+		ResourceRef second = createKnowledgeVersion(
+			fixture.tenantId(), "PUBLISHED", "PARSED", "INDEXED", 5L);
+		List<ResourceRef> requestedRefs = List.of(first, second);
+		UUID idempotencyKey = UUID.randomUUID();
+		String requestBody = generationBody(fixture, requestedRefs, null);
+
+		MvcResult generated = mockMvc.perform(withTenant(
+			post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", fixture.taskId())
+				.header("Idempotency-Key", idempotencyKey)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(requestBody), fixture.tenantId()))
+			.andExpect(status().isAccepted())
+			.andExpect(header().string("Idempotency-Replayed", "false"))
+			.andReturn();
+		UUID runId = UUID.fromString(json(generated).at("/data/id").asText());
+
+		mockMvc.perform(withTenant(
+			post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", fixture.taskId())
+				.header("Idempotency-Key", idempotencyKey)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(requestBody), fixture.tenantId()))
+			.andExpect(status().isAccepted())
+			.andExpect(header().string("Idempotency-Replayed", "true"))
+			.andExpect(jsonPath("$.data.id").value(runId.toString()));
+
+		MvcResult planResult = mockMvc.perform(withTenant(
+			get("/api/core/v1/recruitment-tasks/{taskId}/position-plan", fixture.taskId()), fixture.tenantId()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.knowledgeVersionRefs[0].id").value(first.id().toString()))
+			.andExpect(jsonPath("$.data.knowledgeVersionRefs[0].version").value(first.version()))
+			.andExpect(jsonPath("$.data.knowledgeVersionRefs[1].id").value(second.id().toString()))
+			.andExpect(jsonPath("$.data.knowledgeVersionRefs[1].version").value(second.version()))
+			.andExpect(jsonPath("$.data.hardConstraints[0].sourceRefs[0].id").value(first.id().toString()))
+			.andExpect(jsonPath("$.data.hardConstraints[0].sourceRefs[1].id").value(second.id().toString()))
+			.andExpect(jsonPath("$.data.changeSummary").value(org.hamcrest.Matchers.containsString("仅记录引用")))
+			.andExpect(jsonPath("$.data.changeSummary").value(
+				org.hamcrest.Matchers.containsString("未执行 LLM 或 RAG 内容抽取")))
+			.andReturn();
+
+		JsonNode storedRefs = json(planResult).at("/data/knowledgeVersionRefs");
+		assertThat(storedRefs).hasSize(2);
+		Integer runCount = jdbcTemplate.queryForObject(
+			"SELECT COUNT(*) FROM agent_run WHERE tenant_id = ? AND recruitment_task_id = ?",
+			Integer.class, fixture.tenantId(), fixture.taskId());
+		assertThat(runCount).isEqualTo(1);
+	}
+
+	@Test
+	void rejectsKnowledgeThatIsNotPublishedParsedIndexedOrVisibleToTheTenant() throws Exception {
+		TaskFixture fixture = createTask(null);
+		ResourceRef draft = createKnowledgeVersion(
+			fixture.tenantId(), "DRAFT", "PARSED", "INDEXED", 1L);
+		ResourceRef parsing = createKnowledgeVersion(
+			fixture.tenantId(), "PUBLISHED", "PARSING", "INDEXED", 3L);
+		ResourceRef notIndexed = createKnowledgeVersion(
+			fixture.tenantId(), "PUBLISHED", "PARSED", "NOT_INDEXED", 3L);
+
+		for (ResourceRef unavailable : List.of(draft, parsing, notIndexed)) {
+			mockMvc.perform(withTenant(
+				post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", fixture.taskId())
+					.header("Idempotency-Key", UUID.randomUUID())
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(generationBody(fixture, List.of(unavailable), null)), fixture.tenantId()))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error.code").value("KNOWLEDGE_VERSION_NOT_AVAILABLE"));
+		}
+
+		ResourceRef wrongType = new ResourceRef("KnowledgeDocument", draft.id(), draft.version());
+		mockMvc.perform(withTenant(
+			post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", fixture.taskId())
+				.header("Idempotency-Key", UUID.randomUUID())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(generationBody(fixture, List.of(wrongType), null)), fixture.tenantId()))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		UUID otherTenant = UUID.randomUUID();
+		jdbcTemplate.update(
+			"INSERT INTO tenant (tenant_id, tenant_key, display_name, status) VALUES (?, ?, ?, 'ACTIVE')",
+			otherTenant, TenantActorResolver.tenantKey(otherTenant), "Knowledge owner tenant");
+		ResourceRef crossTenant = createKnowledgeVersion(
+			otherTenant, "PUBLISHED", "PARSED", "INDEXED", 3L);
+		mockMvc.perform(withTenant(
+			post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", fixture.taskId())
+				.header("Idempotency-Key", UUID.randomUUID())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(generationBody(fixture, List.of(crossTenant), null)), fixture.tenantId()))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
+	}
+
+	@Test
 	void validatesScorecardAndDoesNotPretendUnavailableKnowledgeWasRetrieved() throws Exception {
 		TaskFixture fixture = createTask(null);
+		ResourceRef unavailable = createKnowledgeVersion(
+			fixture.tenantId(), "DRAFT", "PARSED", "INDEXED", 1L);
 		String fakeKnowledgeBody = objectMapper.writeValueAsString(Map.of(
 			"requirementDraftRef", resourceRef("RequirementDraft", fixture.draftId(), fixture.draftVersion()),
-			"knowledgeVersionRefs", List.of(resourceRef("KnowledgeVersion", UUID.randomUUID(), 1))));
+			"knowledgeVersionRefs", List.of(unavailable)));
 		mockMvc.perform(withTenant(
 			post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", fixture.taskId())
 				.header("Idempotency-Key", UUID.randomUUID())
@@ -367,10 +473,17 @@ class PositionPlanLifecycleApiTests {
 	}
 
 	private String generationBody(TaskFixture fixture, String instructions) throws Exception {
+		return generationBody(fixture, List.of(), instructions);
+	}
+
+	private String generationBody(
+			TaskFixture fixture,
+			List<ResourceRef> knowledgeVersionRefs,
+			String instructions) throws Exception {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("requirementDraftRef", resourceRef(
 			"RequirementDraft", fixture.draftId(), fixture.draftVersion()));
-		body.put("knowledgeVersionRefs", List.of());
+		body.put("knowledgeVersionRefs", knowledgeVersionRefs);
 		if (instructions != null) body.put("instructions", instructions);
 		return objectMapper.writeValueAsString(body);
 	}
@@ -397,6 +510,59 @@ class PositionPlanLifecycleApiTests {
 
 	private static Map<String, Object> resourceRef(String type, UUID id, long version) {
 		return Map.of("type", type, "id", id, "version", version);
+	}
+
+	private ResourceRef createKnowledgeVersion(
+			UUID tenantId,
+			String publicationStatus,
+			String parseStatus,
+			String indexStatus,
+			long entityVersion) {
+		OffsetDateTime now = OffsetDateTime.now();
+		UUID documentId = UUID.randomUUID();
+		KnowledgeDocument document = new KnowledgeDocument(
+			documentId,
+			"Position plan test knowledge",
+			"JOB_KNOWLEDGE",
+			new ResourceRef("Organization", UUID.randomUUID(), 1L),
+			"INTERNAL",
+			"DRAFT",
+			1L,
+			List.of("position-plan-test"),
+			null,
+			null,
+			null,
+			now,
+			now);
+		knowledgeRepository.insertDocument(tenantId, document, TenantActorResolver.DEMO_USER_ID.toString());
+
+		KnowledgeVersion version = new KnowledgeVersion(
+			UUID.randomUUID(),
+			documentId,
+			1,
+			entityVersion,
+			"position-plan-test.md",
+			"text/markdown",
+			"1".repeat(64),
+			"2".repeat(64),
+			publicationStatus,
+			parseStatus,
+			indexStatus,
+			"plain-text-v1",
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			now);
+		knowledgeRepository.insertVersion(
+			tenantId,
+			new VersionContent(version, 22L, "Position plan evidence", "Test fixture"),
+			List.of(),
+			TenantActorResolver.DEMO_USER_ID.toString(),
+			now);
+		return new ResourceRef("KnowledgeVersion", version.id(), version.version());
 	}
 
 	private JsonNode json(MvcResult result) throws Exception {

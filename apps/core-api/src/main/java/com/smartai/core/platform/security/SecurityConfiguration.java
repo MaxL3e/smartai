@@ -30,6 +30,10 @@ class SecurityConfiguration {
 				"/api/core/v1/match-runs/**",
 				"/api/core/v1/match-results/**",
 				"/api/core/v1/position-plan-versions/**",
+				"/api/core/v1/knowledge-documents/**",
+				"/api/core/v1/knowledge-versions/**",
+				"/api/core/v1/knowledge-upload-sessions/**",
+				"/api/core/v1/knowledge-evidence/**",
 				"/api/core/v1/human-checkpoints/**",
 				"/api/core/v1/agent-runs/**").permitAll()
 			.anyRequest().denyAll());

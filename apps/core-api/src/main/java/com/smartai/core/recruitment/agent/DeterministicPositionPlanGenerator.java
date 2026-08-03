@@ -16,6 +16,7 @@ import com.smartai.core.recruitment.agent.PositionPlanModels.ScoreCriterion;
 import com.smartai.core.recruitment.agent.PositionPlanModels.ScorecardVersion;
 import com.smartai.core.recruitment.agent.PositionPlanModels.ScoringRule;
 import com.smartai.core.recruitment.agent.RequirementDraftModels.Draft;
+import com.smartai.core.recruitment.agent.RequirementDraftModels.ResourceRef;
 import com.smartai.core.recruitment.agent.RequirementDraftModels.Task;
 
 @Component
@@ -36,8 +37,10 @@ final class DeterministicPositionPlanGenerator {
 			Draft sourceDraft,
 			UUID runId,
 			int versionNo,
+			List<ResourceRef> knowledgeVersionRefs,
 			String instructions,
 			OffsetDateTime now) {
+		List<ResourceRef> knowledgeSnapshotRefs = List.copyOf(knowledgeVersionRefs);
 		List<String> requirements = requirements(task, sourceDraft);
 		List<HardConstraint> constraints = task.locations().isEmpty()
 			? List.of()
@@ -47,8 +50,10 @@ final class DeterministicPositionPlanGenerator {
 				"location",
 				"IN",
 				task.locations(),
-				"招聘任务已确认的工作地点",
-				List.of()));
+				knowledgeSnapshotRefs.isEmpty()
+					? "招聘任务已确认的工作地点"
+					: "招聘任务已确认的工作地点；知识版本仅作为固定快照引用，未参与内容抽取",
+				knowledgeSnapshotRefs));
 
 		ScorecardVersion scorecard = new ScorecardVersion(
 			UUID.randomUUID(),
@@ -91,16 +96,24 @@ final class DeterministicPositionPlanGenerator {
 			scorecard,
 			"AI",
 			runId,
-			List.of(),
+			knowledgeSnapshotRefs,
 			PROMPT_VERSION,
 			"0".repeat(64),
-			"由本地确定性演示生成器创建，未调用 LLM 或知识检索。",
+			generationSummary(knowledgeSnapshotRefs.size()),
 			null,
 			null,
 			null,
 			now,
 			now);
 		return withContentHash(plan, hasher.planContentHash(plan));
+	}
+
+	private static String generationSummary(int knowledgeReferenceCount) {
+		if (knowledgeReferenceCount == 0) {
+			return "由本地确定性演示生成器创建，未调用 LLM 或知识检索。";
+		}
+		return "由本地确定性演示生成器创建并锁定 " + knowledgeReferenceCount
+			+ " 个已发布知识版本快照；当前版本仅记录引用，未执行 LLM 或 RAG 内容抽取。";
 	}
 
 	private static ScoreCriterion criterion(String code, String name, String weight, int order) {

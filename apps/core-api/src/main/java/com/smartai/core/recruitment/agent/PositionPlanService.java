@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.smartai.core.platform.api.ApiException;
+import com.smartai.core.recruitment.agent.KnowledgeModels.KnowledgeVersion;
 import com.smartai.core.recruitment.agent.PositionPlanModels.AgentRun;
 import com.smartai.core.recruitment.agent.PositionPlanModels.DecisionRequest;
 import com.smartai.core.recruitment.agent.PositionPlanModels.GenerateRequest;
@@ -42,6 +43,7 @@ public class PositionPlanService {
 
 	private final PositionPlanRepository repository;
 	private final RequirementDraftRepository draftRepository;
+	private final KnowledgeRepository knowledgeRepository;
 	private final DeterministicPositionPlanGenerator generator;
 	private final PositionPlanHasher hasher;
 	private final Clock clock = Clock.systemUTC();
@@ -49,10 +51,12 @@ public class PositionPlanService {
 	public PositionPlanService(
 			PositionPlanRepository repository,
 			RequirementDraftRepository draftRepository,
+			KnowledgeRepository knowledgeRepository,
 			DeterministicPositionPlanGenerator generator,
 			PositionPlanHasher hasher) {
 		this.repository = repository;
 		this.draftRepository = draftRepository;
+		this.knowledgeRepository = knowledgeRepository;
 		this.generator = generator;
 		this.hasher = hasher;
 	}
@@ -76,12 +80,8 @@ public class PositionPlanService {
 		if (request.knowledgeVersionRefs().stream().distinct().count() != request.knowledgeVersionRefs().size()) {
 			throw validation("knowledgeVersionRefs must be unique");
 		}
-		if (!request.knowledgeVersionRefs().isEmpty()) {
-			throw new ApiException(
-				HttpStatus.CONFLICT,
-				"KNOWLEDGE_VERSION_NOT_AVAILABLE",
-				"The deterministic demo provider currently supports an explicit empty knowledge snapshot only");
-		}
+		List<ResourceRef> knowledgeVersionRefs = requireAvailableKnowledgeVersions(
+			actor, request.knowledgeVersionRefs());
 
 		UUID sourceDraftId = repository.findSourceDraftId(actor.tenantId(), taskId).orElseThrow(this::notFound);
 		Draft sourceDraft = draftRepository.find(actor.tenantId(), sourceDraftId).orElseThrow(this::notFound);
@@ -106,7 +106,7 @@ public class PositionPlanService {
 
 		int versionNo = repository.nextPlanVersionNo(actor.tenantId(), taskId);
 		PositionPlanVersion plan = generator.generate(
-			currentTask, sourceDraft, runId, versionNo, request.instructions(), now);
+			currentTask, sourceDraft, runId, versionNo, knowledgeVersionRefs, request.instructions(), now);
 		repository.insertPlan(
 			actor.tenantId(), plan, DeterministicPositionPlanGenerator.GENERATOR_KIND,
 			actor.userId().toString());
@@ -136,7 +136,7 @@ public class PositionPlanService {
 				"taskId", taskId,
 				"planVersion", plan.version(),
 				"generatorKind", DeterministicPositionPlanGenerator.GENERATOR_KIND,
-				"knowledgeReferenceCount", 0,
+				"knowledgeReferenceCount", knowledgeVersionRefs.size(),
 				"agentRunId", runId),
 			now);
 		return new CommandResult<>(result, false);
@@ -262,7 +262,8 @@ public class PositionPlanService {
 			request.assigneeUserId(),
 			current.contentHash(),
 			1L,
-			"请核对岗位描述、职责、任职要求、硬条件、评分卡和推荐阈值。当前知识引用为 0。",
+			"请核对岗位描述、职责、任职要求、硬条件、评分卡、推荐阈值和 "
+				+ current.knowledgeVersionRefs().size() + " 个冻结知识版本引用。",
 			user(actor),
 			now,
 			request.expiresAt(),
@@ -295,7 +296,7 @@ public class PositionPlanService {
 				"planVersionId", current.id(),
 				"frozenPlanVersion", inReview.version(),
 				"generatorKind", DeterministicPositionPlanGenerator.GENERATOR_KIND,
-				"knowledgeReferenceCount", 0),
+				"knowledgeReferenceCount", current.knowledgeVersionRefs().size()),
 			now);
 		return new CommandResult<>(checkpoint, false);
 	}
@@ -430,6 +431,37 @@ public class PositionPlanService {
 				"SOURCE_VERSION_CONFLICT",
 				"requirementDraftRef must identify the task's exact confirmed source draft version");
 		}
+	}
+
+	private List<ResourceRef> requireAvailableKnowledgeVersions(
+			TenantActor actor,
+			List<ResourceRef> requestedRefs) {
+		for (ResourceRef reference : requestedRefs) {
+			if (reference == null
+					|| reference.id() == null
+					|| reference.version() < 1
+					|| !"KnowledgeVersion".equals(reference.type())) {
+				throw validation("knowledgeVersionRefs must contain only KnowledgeVersion references");
+			}
+			KnowledgeVersion version = knowledgeRepository.findVersion(actor.tenantId(), reference.id())
+				.map(KnowledgeModels.VersionContent::version)
+				.orElseThrow(this::notFound);
+			if (reference.version() != version.version()) {
+				throw new ApiException(
+					HttpStatus.CONFLICT,
+					"KNOWLEDGE_VERSION_CONFLICT",
+					"Knowledge version reference does not identify the current immutable snapshot");
+			}
+			if (!"PUBLISHED".equals(version.publicationStatus())
+					|| !"PARSED".equals(version.parseStatus())
+					|| !"INDEXED".equals(version.indexStatus())) {
+				throw new ApiException(
+					HttpStatus.CONFLICT,
+					"KNOWLEDGE_VERSION_NOT_AVAILABLE",
+					"Knowledge version must be published, parsed and indexed before generation");
+			}
+		}
+		return List.copyOf(requestedRefs);
 	}
 
 	private static void ensureRolePlanStage(Task task) {

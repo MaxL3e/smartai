@@ -35,6 +35,11 @@ class DatabaseMigrationTests {
 		"match_result",
 		"agent_run",
 		"human_checkpoint",
+		"knowledge_document",
+		"knowledge_version",
+		"knowledge_chunk",
+		"knowledge_upload_session",
+		"knowledge_command",
 		"audit_event",
 		"outbox_event");
 

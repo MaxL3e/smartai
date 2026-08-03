@@ -77,6 +77,19 @@ import {
   submitCandidateInput,
   updatePositionPlan,
 } from './services/recruitmentAgent.js';
+import {
+  createKnowledgeDocument,
+  deactivateKnowledgeVersion,
+  getKnowledgeDocument,
+  isKnowledgeServiceUnavailable,
+  knowledgeParseStatusLabel,
+  listKnowledgeDocuments,
+  mapKnowledgeDocumentResponse,
+  publishKnowledgeVersion,
+  requestKnowledgeVersionReview,
+  updateKnowledgeDocument,
+  uploadKnowledgeDocument,
+} from './services/knowledgeService.js';
 
 const navItems = [
   { id: 'workspace', label: '智能体工作台', icon: LayoutDashboard },
@@ -238,7 +251,12 @@ const knowledgeSeed = [
   { id: 8, type: '制度流程', title: '候选人数据合规与留存规范', format: 'PDF', owner: '法律合规部', updated: '2026-06-18', status: '可用', refs: 17, version: 'v1.5' },
   { id: 9, type: '岗位知识', title: '数据治理岗位族任职资格标准', format: 'DOCX', owner: '数字科技部', updated: '2026-07-20', status: '可用', refs: 15, version: 'v1.4' },
   { id: 10, type: '人才画像', title: '数据治理项目骨干成功特征分析', format: 'PDF', owner: '人才发展中心', updated: '2026-07-19', status: '可用', refs: 11, version: 'v1.2' },
-];
+].map((item) => ({
+  ...item,
+  parseStatus: '解析完成',
+  parseStatusCode: 'PARSED',
+  syncState: 'demo',
+}));
 
 const initialEvents = [
   { id: 1, taskId: 'R2026-0718', date: '2026-07-22', time: '14:32:16', title: '完成人才库检索', detail: '在 2,846 份简历中筛选出 12 位候选人', type: 'success', actor: '招聘执行智能体', input: '岗位画像 v3.2、集团人才库', output: '推荐候选人 12 位，自动排除 167 位' },
@@ -297,6 +315,22 @@ function normalizeStoredTasks(value) {
       return { ...task, stage: '人才搜索', progress: 30, tone: 'amber', planConfirmed: true };
     }
     return task;
+  });
+}
+
+function normalizeStoredKnowledge(value) {
+  if (!Array.isArray(value) || value.length === 0) return knowledgeSeed;
+  return value.map((item) => {
+    if (item.serverBacked || item.syncState) return item;
+    const demoSource = knowledgeSeed.find((seed) => seed.id === item.id && seed.title === item.title);
+    if (demoSource) return { ...demoSource, ...item };
+    return {
+      ...item,
+      status: '本地草稿',
+      parseStatus: '未上传',
+      parseStatusCode: null,
+      syncState: 'local',
+    };
   });
 }
 
@@ -812,7 +846,9 @@ function App() {
   const loadAppState = (key, fallback) => embedConfig.isEmbedded ? fallback : loadStored(key, fallback);
   const [view, setView] = useState(embedConfig.initialView);
   const [selectedCandidate, setSelectedCandidate] = useState(() => loadAppState('smartai.selectedCandidate', 1));
-  const [knowledge, setKnowledge] = useState(() => loadAppState('smartai.knowledge', knowledgeSeed));
+  const [knowledge, setKnowledge] = useState(() => normalizeStoredKnowledge(loadAppState('smartai.knowledge', knowledgeSeed)));
+  const [knowledgeRuntime, setKnowledgeRuntime] = useState({ status: 'checking', detail: '正在连接企业知识服务' });
+  const [knowledgeRefreshToken, setKnowledgeRefreshToken] = useState(0);
   const [events, setEvents] = useState(() => normalizeStoredEvents(loadAppState('smartai.events', initialEvents)));
   const [tasks, setTasks] = useState(() => normalizeStoredTasks(loadAppState('smartai.recruitmentTasks', initialTasks)));
   const [activeTaskId, setActiveTaskId] = useState(() => loadAppState('smartai.activeTaskId', initialTasks[0].code));
@@ -886,6 +922,31 @@ function App() {
   useEffect(() => persistAppState('smartai.activeTaskId', activeTaskId), [activeTaskId, embedConfig.isEmbedded]);
   useEffect(() => persistAppState('smartai.matchStrategy', matchStrategy), [matchStrategy, embedConfig.isEmbedded]);
   useEffect(() => persistAppState('smartai.notifications', notifications), [notifications, embedConfig.isEmbedded]);
+  useEffect(() => {
+    if (embedConfig.isEmbedded && !hostContext) return undefined;
+    let disposed = false;
+    setKnowledgeRuntime({ status: 'checking', detail: '正在连接企业知识服务' });
+    listKnowledgeDocuments({ accessToken: embedAccessTokenRef.current })
+      .then(({ documents }) => {
+        if (disposed) return;
+        setKnowledge((current) => {
+          const serverIds = new Set(documents.map((item) => item.id));
+          const localDrafts = current.filter((item) => item.syncState === 'local' && !serverIds.has(item.id));
+          return [...documents, ...localDrafts];
+        });
+        setKnowledgeRuntime({ status: 'online', detail: `知识服务已连接 · ${documents.length} 份服务端资料` });
+      })
+      .catch((error) => {
+        if (disposed) return;
+        setKnowledgeRuntime({
+          status: 'local',
+          detail: isKnowledgeServiceUnavailable(error)
+            ? '知识服务未接入，当前修改只保存为本地草稿'
+            : `知识服务不可用：${error.message}`,
+        });
+      });
+    return () => { disposed = true; };
+  }, [embedConfig.isEmbedded, hostContext, knowledgeRefreshToken]);
   useEffect(() => {
     if (!embedConfig.isEmbedded) return undefined;
     const generation = embedEffectGenerationRef.current + 1;
@@ -1504,47 +1565,243 @@ function App() {
     );
   }
 
-  function addKnowledge(item) {
-    setKnowledge((items) => [
-      {
-        id: Date.now(),
-        type: item.type,
-        title: item.title || '未命名知识资料',
-        format: item.format || 'DOCX',
-        owner: item.owner || '当前用户',
-        updated: localDateString(),
-        status: item.status || '待复核',
-        refs: 0,
-        version: 'v1.0',
-        archived: false,
-        description: item.description || '等待维护人员补充资料说明。',
-        tags: item.tags ? item.tags.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean) : [],
-      },
-      ...items,
-    ]);
-    setModalOpen(false);
-    pushEvent('知识资料已上传', item.title || '未命名知识资料进入解析队列');
-    notify('资料已进入解析队列');
+  async function addKnowledge(item) {
+    const tags = item.tags ? item.tags.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean) : [];
+    let created = null;
+    try {
+      const envelope = await createKnowledgeDocument({ ...item, tags }, { accessToken: embedAccessTokenRef.current });
+      created = {
+        ...mapKnowledgeDocumentResponse(envelope),
+        owner: item.owner || '企业知识库',
+        description: item.description || '资料条目已创建，等待补充说明。',
+        format: item.format || 'FILE',
+      };
+      if (item.file) {
+        try {
+          const upload = await uploadKnowledgeDocument(created, item.file, {
+            accessToken: embedAccessTokenRef.current,
+            changeSummary: item.description || '上传知识资料初始版本',
+          });
+          created = {
+            ...created,
+            format: item.format || created.format,
+            version: `v${upload.version?.versionNo || 1}.0`,
+            parseStatusCode: upload.version?.parseStatus || 'UPLOADED',
+            parseStatus: knowledgeParseStatusLabel(upload.version?.parseStatus || 'UPLOADED'),
+            indexStatusCode: upload.version?.indexStatus || 'NOT_INDEXED',
+            knowledgeVersionRef: upload.version ? { type: 'KnowledgeVersion', id: upload.version.id, version: Number(upload.version.version) } : null,
+            serviceVersion: upload.version ? {
+              id: upload.version.id,
+              version: Number(upload.version.version),
+              etag: `"${upload.version.version}"`,
+              inputHash: upload.version.contentHash || upload.version.sha256,
+              publicationStatus: upload.version.publicationStatus,
+              parseStatus: upload.version.parseStatus,
+              indexStatus: upload.version.indexStatus,
+              fileName: upload.version.fileName,
+            } : null,
+            description: item.description || `文件 ${item.file.name} 已上传，等待服务端解析。`,
+          };
+          try {
+            const refreshed = mapKnowledgeDocumentResponse(await getKnowledgeDocument(created.id, { accessToken: embedAccessTokenRef.current }));
+            created = { ...created, ...refreshed, owner: item.owner || created.owner, description: item.description || created.description };
+          } catch {
+            // Upload completion is authoritative; metadata can be refreshed later.
+          }
+        } catch (uploadError) {
+          const partial = {
+            ...created,
+            syncState: 'sync-error',
+            parseStatus: '上传失败',
+            parseStatusCode: 'UPLOAD_FAILED',
+            description: `${item.description || '资料条目已创建。'} 文件尚未上传：${uploadError.message}`,
+          };
+          setKnowledge((items) => [partial, ...items.filter((entry) => entry.id !== partial.id)]);
+          setModalOpen(false);
+          pushEvent('知识文件上传失败', `${partial.title} 的服务端条目已创建，但文件未上传`, 'human');
+          notify('资料条目已创建，但文件上传失败');
+          return { mode: 'partial', item: partial };
+        }
+      }
+      setKnowledge((items) => [created, ...items.filter((entry) => entry.id !== created.id)]);
+      setModalOpen(false);
+      const eventTitle = !item.file
+        ? '知识资料条目已创建'
+        : created.parseStatusCode === 'PARSED'
+          ? '知识文件已解析'
+          : created.parseStatusCode === 'PARSE_FAILED'
+            ? '知识文件已保存，解析器待接入'
+            : '知识文件已提交';
+      const eventDetail = !item.file
+        ? `${created.title} 尚未上传文件`
+        : created.parseStatusCode === 'PARSED'
+          ? `${created.title} 已完成文件校验、内容解析和索引，等待发布审核`
+          : created.parseStatusCode === 'PARSE_FAILED'
+            ? `${created.title} 已完成文件校验与保存，当前格式的解析器尚未配置`
+            : `${created.title} 已上传，等待服务端处理`;
+      pushEvent(eventTitle, eventDetail, 'human');
+      notify(eventTitle);
+      return { mode: 'service', item: created };
+    } catch (error) {
+      if (!created && isKnowledgeServiceUnavailable(error)) {
+        const localDraft = {
+          id: `local-${Date.now()}`,
+          type: item.type,
+          title: item.title || '未命名知识资料',
+          format: item.format || 'FILE',
+          owner: item.owner || '当前用户',
+          updated: localDateString(),
+          status: '本地草稿',
+          refs: 0,
+          version: '本地',
+          archived: false,
+          description: item.description || '知识服务未接入，文件尚未上传。',
+          tags,
+          fileName: item.file?.name || '',
+          parseStatus: '未上传',
+          parseStatusCode: null,
+          syncState: 'local',
+          serverBacked: false,
+        };
+        setKnowledge((items) => [localDraft, ...items]);
+        setKnowledgeRuntime({ status: 'local', detail: '知识服务未接入，当前修改只保存为本地草稿' });
+        setModalOpen(false);
+        pushEvent('保存知识本地草稿', `${localDraft.title} 未上传到服务端`, 'human');
+        notify('服务不可用，已保存本地草稿');
+        return { mode: 'local', item: localDraft };
+      }
+      throw error;
+    }
   }
 
-  function updateKnowledge(id, changes) {
-    setKnowledge((items) => items.map((item) => item.id === id ? { ...item, ...changes } : item));
+  async function updateKnowledge(id, changes) {
+    const item = knowledge.find((entry) => entry.id === id);
+    if (!item) return;
+    if (!item.serverBacked) {
+      setKnowledge((items) => items.map((entry) => entry.id === id ? {
+        ...entry,
+        ...changes,
+        status: '本地草稿',
+        updated: localDateString(),
+        syncState: 'local',
+      } : entry));
+      pushEvent('更新知识本地草稿', `${changes.title || item.title} 的修改尚未同步服务端`, 'human');
+      setDialog(null);
+      notify('本地草稿已更新，尚未同步服务端');
+      return;
+    }
+
+    const serviceChanges = { title: changes.title, tags: changes.tags };
+    if (changes.status === '停用' && item.serviceDocument?.status !== 'DISABLED') serviceChanges.statusCommand = 'DISABLE';
+    if (changes.status === '可用' && item.serviceDocument?.status === 'DISABLED') serviceChanges.statusCommand = 'RESTORE';
+    const envelope = await updateKnowledgeDocument(item, serviceChanges, { accessToken: embedAccessTokenRef.current });
+    const mapped = mapKnowledgeDocumentResponse(envelope);
+    const updated = {
+      ...item,
+      ...mapped,
+      owner: item.owner,
+      description: item.description,
+      refs: item.refs,
+      format: mapped.format === 'FILE' ? item.format : mapped.format,
+    };
+    setKnowledge((items) => items.map((entry) => entry.id === id ? updated : entry));
+    pushEvent('更新知识资料', `${updated.title} 的元数据已同步服务端`, 'human');
+    setDialog(null);
+    notify('知识资料已同步更新');
+  }
+
+  async function setKnowledgeArchived(id, archived) {
+    const item = knowledge.find((entry) => entry.id === id);
+    if (!item) return;
+    if (!item.serverBacked) {
+      setKnowledge((items) => items.map((entry) => entry.id === id ? { ...entry, archived } : entry));
+      pushEvent(archived ? '归档知识本地草稿' : '恢复知识本地草稿', `${item.title} 的操作尚未同步服务端`, 'human');
+      setDialog(null);
+      notify(archived ? '本地草稿已归档' : '本地草稿已恢复');
+      return;
+    }
+    const envelope = await updateKnowledgeDocument(item, {
+      statusCommand: archived ? 'ARCHIVE' : 'RESTORE',
+      reason: archived ? '知识维护人员归档资料' : '知识维护人员恢复资料',
+    }, { accessToken: embedAccessTokenRef.current });
+    const mapped = mapKnowledgeDocumentResponse(envelope);
+    setKnowledge((items) => items.map((entry) => entry.id === id ? { ...entry, ...mapped, owner: entry.owner, description: entry.description, refs: entry.refs } : entry));
+    pushEvent(archived ? '知识资料已归档' : '恢复知识资料', `${item.title} 已同步服务端`, 'human');
+    setDialog(null);
+    notify(archived ? '知识资料已归档' : '知识资料已恢复');
   }
 
   function removeKnowledge(id) {
-    const item = knowledge.find((entry) => entry.id === id);
-    setKnowledge((items) => items.map((entry) => entry.id === id ? { ...entry, archived: true } : entry));
-    pushEvent('知识资料已归档', item?.title || '知识资料', 'human');
-    setDialog(null);
-    notify('知识资料已归档');
+    return setKnowledgeArchived(id, true);
   }
 
   function restoreKnowledge(id) {
+    return setKnowledgeArchived(id, false);
+  }
+
+  async function requestKnowledgeReview(id) {
     const item = knowledge.find((entry) => entry.id === id);
-    setKnowledge((items) => items.map((entry) => entry.id === id ? { ...entry, archived: false } : entry));
-    pushEvent('恢复知识资料', item?.title || '知识资料', 'human');
-    setDialog(null);
-    notify('知识资料已恢复');
+    if (!item?.serverBacked) return;
+    const envelope = await requestKnowledgeVersionReview(item, { accessToken: embedAccessTokenRef.current });
+    const checkpoint = envelope?.data ? { ...envelope.data, etag: envelope.__responseMeta?.etag || `"${envelope.data.version}"` } : null;
+    const updated = {
+      ...item,
+      status: '待复核',
+      reviewCheckpoint: checkpoint,
+      serviceVersion: { ...item.serviceVersion, publicationStatus: 'IN_REVIEW' },
+    };
+    setKnowledge((items) => items.map((entry) => entry.id === id ? updated : entry));
+    setDialog({ type: 'knowledge', item: updated });
+    pushEvent('提交知识发布审核', `${item.title} 已进入知识管理员确认`, 'human');
+    notify('已提交发布审核');
+  }
+
+  async function uploadKnowledgeVersion(id, file) {
+    const item = knowledge.find((entry) => entry.id === id);
+    if (!item?.serverBacked || !file) return;
+    await uploadKnowledgeDocument(item, file, {
+      accessToken: embedAccessTokenRef.current,
+      changeSummary: `上传 ${file.name}`,
+    });
+    const refreshed = mapKnowledgeDocumentResponse(await getKnowledgeDocument(item.id, { accessToken: embedAccessTokenRef.current }));
+    const updated = { ...item, ...refreshed, owner: item.owner, description: `文件 ${file.name} 已上传，${refreshed.parseStatus}。`, refs: item.refs, reviewCheckpoint: null };
+    setKnowledge((items) => items.map((entry) => entry.id === id ? updated : entry));
+    setDialog({ type: 'knowledge', item: updated });
+    pushEvent('上传知识新版本', `${item.title} 已提交文件 ${file.name}`, 'human');
+    notify(refreshed.parseStatusCode === 'PARSED' ? '知识新版本已完成解析' : '知识新版本已提交解析');
+  }
+
+  async function publishKnowledge(id) {
+    const item = knowledge.find((entry) => entry.id === id);
+    if (!item?.serverBacked || !item.reviewCheckpoint) return;
+    const envelope = await publishKnowledgeVersion(item, item.reviewCheckpoint, { accessToken: embedAccessTokenRef.current });
+    const mapped = mapKnowledgeDocumentResponse(envelope);
+    const updated = { ...item, ...mapped, owner: item.owner, description: item.description, refs: item.refs, reviewCheckpoint: null };
+    setKnowledge((items) => items.map((entry) => entry.id === id ? updated : entry));
+    setDialog({ type: 'knowledge', item: updated });
+    pushEvent('发布知识版本', `${item.title} 已通过人工确认并进入智能体知识检索范围`, 'human');
+    notify('知识版本已发布');
+  }
+
+  async function deactivateKnowledge(id) {
+    const item = knowledge.find((entry) => entry.id === id);
+    if (!item?.serverBacked) return;
+    const envelope = await deactivateKnowledgeVersion(item, { accessToken: embedAccessTokenRef.current });
+    const version = envelope?.data;
+    const updated = {
+      ...item,
+      status: '停用',
+      serviceVersion: version ? {
+        ...item.serviceVersion,
+        version: Number(version.version),
+        etag: envelope.__responseMeta?.etag || `"${version.version}"`,
+        publicationStatus: version.publicationStatus,
+      } : { ...item.serviceVersion, publicationStatus: 'DISABLED' },
+    };
+    setKnowledge((items) => items.map((entry) => entry.id === id ? updated : entry));
+    setDialog({ type: 'knowledge', item: updated });
+    pushEvent('停用知识版本', `${item.title} 已从新的智能体检索中排除`, 'human');
+    notify('当前知识版本已停用');
   }
 
   function createTask(form) {
@@ -1632,9 +1889,15 @@ function App() {
     selectedCandidates,
     toggleCandidate,
     knowledge,
+    knowledgeRuntime,
+    refreshKnowledge: () => setKnowledgeRefreshToken((value) => value + 1),
     updateKnowledge,
     removeKnowledge,
     restoreKnowledge,
+    requestKnowledgeReview,
+    uploadKnowledgeVersion,
+    publishKnowledge,
+    deactivateKnowledge,
     tasks,
     activeTask,
     setActiveTaskId,
@@ -2442,14 +2705,14 @@ function GlobalSearch({ tasks, candidates, knowledge, onClose, onNavigate }) {
 }
 
 function DetailDialog({ dialog, onClose, context }) {
-  const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy } = context;
+  const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, requestKnowledgeReview, uploadKnowledgeVersion, publishKnowledge, deactivateKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy } = context;
   if (dialog.type === 'help') return <DialogShell title="演示帮助中心" eyebrow="产品帮助" onClose={onClose}><div className="help-grid"><div><span>01</span><strong>创建招聘任务</strong><p>录入需求后，智能体会生成岗位方案、评分卡和知识引用。</p></div><div><span>02</span><strong>确认人才名单</strong><p>查看候选人匹配证据，调整策略并形成推荐名单。</p></div><div><span>03</span><strong>生成推荐结果</strong><p>保存候选名单草稿，后续生成服务端确认版本和推荐报告。</p></div><div><span>04</span><strong>维护企业知识</strong><p>新增、复核和归档岗位知识、人才画像与制度流程。</p></div></div><div className="dialog-note"><ShieldCheck size={17} />演示数据均为虚构数据，所有修改仅保存在当前浏览器。</div></DialogShell>;
   if (dialog.type === 'runtime-info') return <DialogShell title="独立招聘智能体" eyebrow="当前产品主线" onClose={onClose}><div className="rule-dialog-list">{[['需求与岗位','通过自然语言整理招聘需求，生成岗位方案和评分标准'],['企业知识','维护历史 JD、用人标准和人才画像，记录版本与引用'],['人才匹配','在独立简历库中完成硬条件过滤、固定评分和证据解释'],['人工确认','确认岗位方案与候选名单，导出可追溯的推荐结果']].map(([title, text]) => <div key={title}><span><Bot size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div><div className="dialog-note"><AlertTriangle size={17} />ATS 与在线面试平台当前仅保留接口契约和扩展点，不参与本阶段功能验收。</div></DialogShell>;
   if (dialog.type === 'enterprise') return <DialogShell title="企业空间" eyebrow="当前租户" onClose={onClose}><div className="enterprise-dialog"><span className="enterprise-logo"><Building2 size={23} /></span><div><strong>华岳能源集团</strong><p>集团招聘智能体演示环境</p></div></div><div className="detail-list"><div><span>组织范围</span><strong>集团总部及 12 家下属企业</strong></div><div><span>数据环境</span><strong>演示数据 · 本地存储</strong></div><div><span>知识权限</span><strong>组织人事部 / 招聘中心</strong></div></div><div className="dialog-note"><LockKeyhole size={17} />正式接入客户系统后，企业空间将隔离任务、人才与知识数据。</div></DialogShell>;
   if (dialog.type === 'rules') return <DialogShell title="智能体执行边界" eyebrow="安全与治理" onClose={onClose}><div className="rule-dialog-list">{[['允许自动执行','需求解析、知识检索、候选评分和报告草拟'],['必须人工确认','岗位发布、候选名单、淘汰决定、录用决定、Offer审批'],['禁止使用','年龄、性别、婚育、籍贯等与岗位胜任无关的敏感属性'],['全程留痕','知识引用、评分证据、人工修改和对外操作均记录审计日志']].map(([title, text], index) => <div key={title}><span>{index < 2 ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}</span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
   if (dialog.type === 'governance') return <DialogShell title="知识治理规则" eyebrow="知识库管理" onClose={onClose}><div className="rule-dialog-list">{[['上传检查','识别候选人隐私、敏感属性、重复资料和文件有效期'],['解析复核','新资料默认进入待复核状态，确认后才参与智能体检索'],['版本管理','保留资料版本、维护部门、更新时间和引用记录'],['画像约束','只使用能力与行为证据，不使用受保护或非岗位相关属性']].map(([title, text]) => <div key={title}><span><ShieldCheck size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
   if (dialog.type === 'task-edit') { const task = dialog.task || activeTask; return <TaskEditDialog task={task} onClose={onClose} onSave={(changes) => { updateTask(task.code, changes); onClose(); }} onArchive={() => task.archived ? restoreTask(task.code) : archiveTask(task.code)} />; }
-  if (dialog.type === 'knowledge') return <KnowledgeDetailDialog item={dialog.item} onClose={onClose} onSave={(changes) => { updateKnowledge(dialog.item.id, { ...changes, updated: localDateString() }); pushEvent('更新知识资料', `${changes.title || dialog.item.title} 已保存新版本`, 'human'); notify('知识资料已更新'); onClose(); }} onArchive={() => dialog.item.archived ? restoreKnowledge(dialog.item.id) : removeKnowledge(dialog.item.id)} />;
+  if (dialog.type === 'knowledge') return <KnowledgeDetailDialog item={dialog.item} onClose={onClose} onSave={(changes) => updateKnowledge(dialog.item.id, changes)} onArchive={() => dialog.item.archived ? restoreKnowledge(dialog.item.id) : removeKnowledge(dialog.item.id)} onUpload={(file) => uploadKnowledgeVersion(dialog.item.id, file)} onReview={() => requestKnowledgeReview(dialog.item.id)} onPublish={() => publishKnowledge(dialog.item.id)} onDeactivate={() => deactivateKnowledge(dialog.item.id)} />;
   if (dialog.type === 'resume') return <DialogShell title={`${dialog.person.name} · 简历原文`} eyebrow="候选人档案" onClose={onClose} wide actions={<button className="btn primary" onClick={() => { downloadText(`${dialog.person.name}-简历.txt`, buildResumeText(dialog.person)); notify('简历已下载'); }}><Download size={16} />下载简历</button>}><ResumeDocument person={dialog.person} highlight={dialog.highlight} /></DialogShell>;
   if (dialog.type === 'scorecard') return <DialogShell title="人才匹配评分卡" eyebrow="当前岗位规则" onClose={onClose}><ScorecardDetail task={activeTask} strategy={dialog.strategy || matchStrategy} /></DialogShell>;
   if (dialog.type === 'scorecard-edit') return <RoleScorecardDialog task={activeTask} onClose={onClose} onSave={({ rules, thresholds }) => {
@@ -2545,18 +2808,69 @@ function TaskEditDialog({ task, onClose, onSave, onArchive }) {
   return <DialogShell title={task.archived ? '查看归档任务' : '编辑招聘任务'} eyebrow={task.code} onClose={onClose} actions={<><button className={task.archived ? 'btn secondary' : 'btn danger'} onClick={onArchive}>{task.archived ? <RefreshCw size={16} /> : <Archive size={16} />}{task.archived ? '恢复任务' : '归档任务'}</button><button className="btn secondary" onClick={onClose}>取消</button>{!task.archived && <button className="btn primary" disabled={!valid} onClick={() => onSave(form)}><Save size={16} />保存修改</button>}</>}><div className="form-grid dialog-form"><label className="span-2"><span>招聘岗位</span><input disabled={task.archived} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} /></label><label><span>需求部门</span><input disabled={task.archived} value={form.dept} onChange={(e) => setForm({ ...form, dept: e.target.value })} /></label><label><span>工作地点</span><input disabled={task.archived} value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></label><label><span>招聘人数</span><input disabled={task.archived} type="number" min="1" value={form.headcount} onChange={(e) => setForm({ ...form, headcount: Number(e.target.value), count: `${e.target.value}人` })} /></label><label><span>招聘类型</span><select disabled={task.archived} value={form.recruitmentType} onChange={(e) => setForm({ ...form, recruitmentType: e.target.value })}><option>社会招聘</option><option>校园招聘</option><option>内部竞聘</option></select></label><label><span>优先级</span><select disabled={task.archived} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}><option>高</option><option>中</option><option>低</option></select></label><label className="span-2"><span>核心要求</span><textarea disabled={task.archived} value={form.requirement} onChange={(e) => setForm({ ...form, requirement: e.target.value })} /></label></div></DialogShell>;
 }
 
-function KnowledgeDetailDialog({ item, onClose, onSave, onArchive }) {
+function KnowledgeDetailDialog({ item, onClose, onSave, onArchive, onUpload, onReview, onPublish, onDeactivate }) {
   const [editing, setEditing] = useState(false);
-  const initialForm = { ...item, description: item.description || '该资料已完成结构化解析，可用于岗位方案生成和人才评价。', tagsText: (item.tags || []).join('，') };
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const versionFileRef = useRef(null);
+  const initialForm = {
+    ...item,
+    description: item.description || (item.parseStatusCode === 'PARSED' ? '该资料已完成结构化解析。' : '该资料尚未完成服务端解析。'),
+    tagsText: (item.tags || []).join('，'),
+  };
   const [form, setForm] = useState(initialForm);
   const valid = form.title?.trim() && form.owner?.trim();
-  const actions = editing ? <><button className="btn secondary" onClick={() => { setForm(initialForm); setEditing(false); }}>取消</button><button className="btn primary" disabled={!valid} onClick={() => onSave({ ...form, tags: form.tagsText.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean), version: bumpVersion(item.version) })}><Save size={16} />保存新版本</button></> : item.archived ? <button className="btn primary" onClick={onArchive}><RefreshCw size={16} />恢复资料</button> : <><button className="btn danger" onClick={onArchive}><Archive size={16} />归档</button><button className="btn primary" onClick={() => setEditing(true)}><Edit3 size={16} />编辑资料</button></>;
-  return <DialogShell title={item.title} eyebrow={`${item.type} · ${item.version}`} onClose={onClose} actions={actions} wide>{editing ? <div className="form-grid dialog-form"><label className="span-2"><span>资料名称</span><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>状态</span><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>可用</option><option>待复核</option><option>停用</option></select></label><label><span>维护部门</span><input value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} /></label><label className="span-2"><span>标签</span><input value={form.tagsText} onChange={(e) => setForm({ ...form, tagsText: e.target.value })} placeholder="使用逗号分隔" /></label><label className="span-2"><span>资料说明</span><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label></div> : <><div className="knowledge-detail-summary"><span className={`file-icon ${item.format.toLowerCase()}`}><FileText size={20} /></span><div><strong>{item.format} · {item.version}</strong><p>{form.description}</p></div><StatusPill tone={item.status === '可用' ? 'green' : 'amber'}>{item.status}</StatusPill></div><div className="detail-list"><div><span>维护部门</span><strong>{item.owner}</strong></div><div><span>最近更新</span><strong>{item.updated}</strong></div><div><span>近30天引用</span><strong>{item.refs} 次</strong></div><div><span>解析状态</span><strong className="success-text">结构化解析完成</strong></div></div><div className="parsed-sections"><h3>已解析内容</h3><div><span>任职要求</span><strong>8 条</strong></div><div><span>能力标签</span><strong>12 项</strong></div><div><span>评价标准</span><strong>4 个维度</strong></div><div><span>适用岗位</span><strong>3 个岗位</strong></div></div></>}</DialogShell>;
-}
+  const canToggleStatus = item.serverBacked && ['PUBLISHED', 'DISABLED'].includes(item.serviceDocument?.status);
+  const reviewable = item.serverBacked && item.parseStatusCode === 'PARSED' && item.indexStatusCode === 'INDEXED' && item.serviceVersion?.publicationStatus === 'DRAFT';
+  const publishable = item.serverBacked && item.serviceVersion?.publicationStatus === 'IN_REVIEW' && Boolean(item.reviewCheckpoint);
+  const deactivatable = item.serverBacked && item.serviceVersion?.publicationStatus === 'PUBLISHED';
 
-function bumpVersion(version = 'v1.0') {
-  const [major, minor] = version.replace('v', '').split('.').map(Number);
-  return `v${major}.${(minor || 0) + 1}`;
+  async function execute(operation) {
+    setPending(true);
+    setError('');
+    try {
+      await operation();
+    } catch (operationError) {
+      setError(operationError?.message || '知识服务操作失败，请稍后重试');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const save = () => execute(() => onSave({
+    ...form,
+    tags: form.tagsText.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean),
+  }));
+  const actions = editing
+    ? <><button className="btn secondary" disabled={pending} onClick={() => { setForm(initialForm); setEditing(false); setError(''); }}>取消</button><button className="btn primary" disabled={!valid || pending} onClick={save}>{pending ? <RefreshCw className="spin" size={16} /> : <Save size={16} />}{pending ? '正在保存' : item.serverBacked ? '同步修改' : '保存本地草稿'}</button></>
+    : item.archived
+      ? <button className="btn primary" disabled={pending} onClick={() => execute(onArchive)}>{pending ? <RefreshCw className="spin" size={16} /> : <RefreshCw size={16} />}{pending ? '正在恢复' : '恢复资料'}</button>
+      : <>
+        <button className="btn danger" disabled={pending} onClick={() => execute(onArchive)}><Archive size={16} />{pending ? '正在归档' : '归档'}</button>
+        {item.serverBacked && <><input ref={versionFileRef} hidden type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) execute(() => onUpload(file)); event.target.value = ''; }} /><button className="btn secondary" disabled={pending} onClick={() => versionFileRef.current?.click()}><UploadCloud size={16} />上传新版本</button></>}
+        {reviewable && <button className="btn primary" disabled={pending} onClick={() => execute(onReview)}><UserCheck size={16} />提交发布审核</button>}
+        {publishable && <button className="btn primary" disabled={pending} onClick={() => execute(onPublish)}><BadgeCheck size={16} />批准并发布</button>}
+        {deactivatable && <button className="btn secondary" disabled={pending} onClick={() => execute(onDeactivate)}><ShieldCheck size={16} />停用当前版本</button>}
+        <button className="btn primary" disabled={pending} onClick={() => setEditing(true)}><Edit3 size={16} />编辑资料</button>
+      </>;
+
+  return <DialogShell title={item.title} eyebrow={`${item.type} · ${item.version}`} onClose={pending ? undefined : onClose} actions={actions} wide>
+    {error && <div className="service-error-banner"><AlertTriangle size={17} /><span><strong>服务端未保存</strong><small>{error}</small></span></div>}
+    {editing ? <div className="form-grid dialog-form">
+      <label className="span-2"><span>资料名称</span><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
+      <label><span>状态</span><select disabled={!canToggleStatus} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{canToggleStatus ? <><option>可用</option><option>停用</option></> : <option>{form.status}</option>}</select></label>
+      <label><span>维护部门</span><input disabled={item.serverBacked} value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} /></label>
+      <label className="span-2"><span>标签</span><input value={form.tagsText} onChange={(e) => setForm({ ...form, tagsText: e.target.value })} placeholder="使用逗号分隔" /></label>
+      <label className="span-2"><span>资料说明</span><textarea disabled={item.serverBacked} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
+      {item.serverBacked && <div className="modal-note span-2"><ShieldCheck size={17} /><span>维护组织和文件说明由服务端版本管理；本次仅同步资料名称、标签和可用状态。</span></div>}
+    </div> : <>
+      <div className="knowledge-detail-summary"><span className={`file-icon ${item.format.toLowerCase()}`}><FileText size={20} /></span><div><strong>{item.format} · {item.version}</strong><p>{form.description}</p></div><StatusPill tone={item.status === '可用' ? 'green' : 'amber'}>{item.status}</StatusPill></div>
+      <div className="detail-list"><div><span>维护部门</span><strong>{item.owner}</strong></div><div><span>最近更新</span><strong>{item.updated}</strong></div><div><span>引用统计</span><strong>{item.serverBacked ? '尚未接入' : `${item.refs || 0} 次`}</strong></div><div><span>解析状态</span><strong className={item.parseStatusCode === 'PARSED' ? 'success-text' : 'warning-text'}>{item.parseStatus || '未上传'}</strong></div></div>
+      {item.parseStatusCode === 'PARSED'
+        ? <div className="parsed-sections"><h3>服务端处理结果</h3><div><span>内容解析</span><strong>已完成</strong></div><div><span>检索索引</span><strong>{item.indexStatusCode === 'INDEXED' ? '已建立' : '未建立'}</strong></div><div><span>发布状态</span><strong>{item.status}</strong></div><div><span>版本快照</span><strong>{item.version}</strong></div></div>
+        : <div className="dialog-note"><AlertTriangle size={17} /><span>{item.syncState === 'local' ? '本地草稿未上传到服务端，不能参与智能体检索。' : `当前状态：${item.parseStatus || '未上传'}。解析完成前不会参与智能体检索。`}</span></div>}
+    </>}
+  </DialogShell>;
 }
 
 function buildResumeText(person) {
@@ -2740,13 +3054,13 @@ function CandidateDetail({ person, task, selected, onToggle, openDialog, notify,
   );
 }
 
-function Knowledge({ knowledge, setModalOpen, openDialog }) {
+function Knowledge({ knowledge, knowledgeRuntime, refreshKnowledge, setModalOpen, openDialog }) {
   const [type, setType] = useState('全部资料');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('全部状态');
   const [sort, setSort] = useState('recent');
   const [showArchived, setShowArchived] = useState(false);
-  const tabs = ['全部资料', '岗位知识', '人才画像', '制度流程'];
+  const tabs = ['全部资料', '岗位知识', '人才画像', '制度流程', '评价标准'];
   const activeKnowledge = knowledge.filter((item) => !item.archived);
   const listSource = knowledge.filter((item) => showArchived ? item.archived : !item.archived);
   const filtered = useMemo(() => listSource.filter((item) => (type === '全部资料' || item.type === type) && (status === '全部状态' || item.status === status) && `${item.title}${item.owner}${item.type}${(item.tags || []).join('')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => sort === 'refs' ? b.refs - a.refs : b.updated.localeCompare(a.updated)), [listSource, type, query, status, sort]);
@@ -2754,38 +3068,50 @@ function Knowledge({ knowledge, setModalOpen, openDialog }) {
     岗位知识: activeKnowledge.filter((i) => i.type === '岗位知识').length,
     人才画像: activeKnowledge.filter((i) => i.type === '人才画像').length,
     制度流程: activeKnowledge.filter((i) => i.type === '制度流程').length,
+    评价标准: activeKnowledge.filter((i) => i.type === '评价标准').length,
   };
   const listCounts = {
     岗位知识: listSource.filter((i) => i.type === '岗位知识').length,
     人才画像: listSource.filter((i) => i.type === '人才画像').length,
     制度流程: listSource.filter((i) => i.type === '制度流程').length,
+    评价标准: listSource.filter((i) => i.type === '评价标准').length,
   };
-  const reviewCount = activeKnowledge.filter((item) => item.status !== '可用').length;
-  const health = Math.max(0, 100 - reviewCount * 3);
+  const readyKnowledge = activeKnowledge.filter((item) => item.status === '可用' && item.parseStatusCode === 'PARSED' && item.indexStatusCode === 'INDEXED');
+  const readyCounts = {
+    岗位知识: readyKnowledge.filter((item) => item.type === '岗位知识').length,
+    人才画像: readyKnowledge.filter((item) => item.type === '人才画像').length,
+    制度流程: readyKnowledge.filter((item) => item.type === '制度流程').length,
+  };
+  const health = activeKnowledge.length ? Math.round((readyKnowledge.length / activeKnowledge.length) * 100) : 0;
   return (
     <>
       <PageHeader eyebrow="智能体管理" title="企业招聘知识库" description="沉淀企业岗位标准、人才成功特征与招聘制度，为智能体提供可信依据"
         actions={<button className="btn primary" onClick={() => setModalOpen(true)}><Plus size={17} />新增知识</button>} />
+      <section className={classNames('knowledge-service-banner', knowledgeRuntime.status)}>
+        {knowledgeRuntime.status === 'online' ? <CheckCircle2 size={18} /> : knowledgeRuntime.status === 'checking' ? <RefreshCw className="spin" size={18} /> : <AlertTriangle size={18} />}
+        <span><strong>{knowledgeRuntime.status === 'online' ? '知识服务在线' : knowledgeRuntime.status === 'checking' ? '正在检查知识服务' : '本地草稿模式 · 服务未接入'}</strong><small>{knowledgeRuntime.detail}</small></span>
+        {knowledgeRuntime.status !== 'online' && <button className="btn secondary" onClick={refreshKnowledge}><RefreshCw size={15} />重新连接</button>}
+      </section>
       <section className="knowledge-overview">
-        <div className="knowledge-stat"><span className="knowledge-icon role"><BriefcaseBusiness size={20} /></span><span><small>岗位知识</small><strong>{counts.岗位知识}<em> 份资料</em></strong><i>覆盖 18 个岗位族</i></span></div>
-        <div className="knowledge-stat"><span className="knowledge-icon portrait"><UsersRound size={20} /></span><span><small>人才画像</small><strong>{counts.人才画像}<em> 份资料</em></strong><i>关联 326 条任职结果</i></span></div>
-        <div className="knowledge-stat"><span className="knowledge-icon policy"><ShieldCheck size={20} /></span><span><small>制度流程</small><strong>{counts.制度流程}<em> 份资料</em></strong><i>7 项规则正在生效</i></span></div>
-        <div className="knowledge-health"><span><BadgeCheck size={19} />知识健康度</span><strong>{health}%</strong><i><b style={{ width: `${health}%` }} /></i><small>{reviewCount} 份资料建议复核</small></div>
+        <div className="knowledge-stat"><span className="knowledge-icon role"><BriefcaseBusiness size={20} /></span><span><small>岗位知识</small><strong>{counts.岗位知识}<em> 份资料</em></strong><i>{readyCounts.岗位知识} 份已发布可用</i></span></div>
+        <div className="knowledge-stat"><span className="knowledge-icon portrait"><UsersRound size={20} /></span><span><small>人才画像</small><strong>{counts.人才画像}<em> 份资料</em></strong><i>{readyCounts.人才画像} 份已发布可用</i></span></div>
+        <div className="knowledge-stat"><span className="knowledge-icon policy"><ShieldCheck size={20} /></span><span><small>制度流程</small><strong>{counts.制度流程}<em> 份资料</em></strong><i>{readyCounts.制度流程} 份已发布可用</i></span></div>
+        <div className="knowledge-health"><span><BadgeCheck size={19} />发布就绪率</span><strong>{health}%</strong><i><b style={{ width: `${health}%` }} /></i><small>{readyKnowledge.length}/{activeKnowledge.length} 份资料可供智能体引用</small></div>
       </section>
       <section className="knowledge-workspace">
         <div className="knowledge-tabs" role="tablist">
           {tabs.map((tab) => <button role="tab" aria-selected={type === tab} className={type === tab ? 'active' : ''} onClick={() => setType(tab)} key={tab}>{tab}<span>{tab === '全部资料' ? listSource.length : listCounts[tab]}</span></button>)}
         </div>
-        <div className="knowledge-toolbar"><label className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索知识标题、部门或标签" /></label><label className="select-button"><ListFilter size={16} /><select value={status} onChange={(event) => setStatus(event.target.value)}><option>全部状态</option><option>可用</option><option>待复核</option><option>停用</option></select><ChevronDown size={14} /></label><label className="select-button"><History size={16} /><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">最近更新</option><option value="refs">引用次数</option></select><ChevronDown size={14} /></label><button className={classNames('btn secondary', showArchived && 'is-active')} onClick={() => { setShowArchived((value) => !value); setType('全部资料'); }}><Archive size={16} />{showArchived ? '返回知识库' : '查看归档'}</button></div>
+        <div className="knowledge-toolbar"><label className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索知识标题、部门或标签" /></label><label className="select-button"><ListFilter size={16} /><select value={status} onChange={(event) => setStatus(event.target.value)}><option>全部状态</option><option>可用</option><option>待复核</option><option>草稿</option><option>本地草稿</option><option>停用</option></select><ChevronDown size={14} /></label><label className="select-button"><History size={16} /><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">最近更新</option><option value="refs">引用次数</option></select><ChevronDown size={14} /></label><button className={classNames('btn secondary', showArchived && 'is-active')} onClick={() => { setShowArchived((value) => !value); setType('全部资料'); }}><Archive size={16} />{showArchived ? '返回知识库' : '查看归档'}</button></div>
         <div className="data-table knowledge-table">
           <div className="table-row table-head"><span>资料名称</span><span>知识分类</span><span>版本与状态</span><span>维护部门</span><span>智能体引用</span><span>更新时间</span><span /></div>
           {filtered.map((item) => (
             <button className="table-row" key={item.id} onClick={() => openDialog('knowledge', { item })}>
-              <span className="file-cell"><em className={`file-icon ${item.format.toLowerCase()}`}><FileText size={18} /></em><span><strong>{item.title}</strong><small>{item.format} · 已完成内容解析</small></span></span>
+              <span className="file-cell"><em className={`file-icon ${(item.format || 'file').toLowerCase()}`}><FileText size={18} /></em><span><strong>{item.title}</strong><small>{item.format || 'FILE'} · {item.parseStatusCode === 'PARSED' ? '已完成内容解析' : item.parseStatus || '未上传'}</small></span></span>
               <span><StatusPill tone={item.type === '岗位知识' ? 'blue' : item.type === '人才画像' ? 'green' : 'gray'}>{item.type}</StatusPill></span>
               <span><strong>{item.version}</strong><small className={item.status === '可用' ? 'success-text' : 'warning-text'}>{item.status === '可用' ? '●' : '▲'} {item.status}</small></span>
               <span>{item.owner}</span>
-              <span><strong>{item.refs}</strong><small>近30天</small></span>
+              <span><strong>{item.serverBacked ? '—' : item.refs}</strong><small>{item.serverBacked ? '待接入统计' : '近30天'}</small></span>
               <span>{item.updated}</span>
               <span><MoreHorizontal size={17} /></span>
             </button>
@@ -2799,28 +3125,49 @@ function Knowledge({ knowledge, setModalOpen, openDialog }) {
 }
 
 function KnowledgeModal({ onClose, onSubmit }) {
-  const [form, setForm] = useState({ type: '岗位知识', title: '', owner: '组织人事部', format: 'DOCX', description: '', tags: '', fileName: '' });
+  const [form, setForm] = useState({ type: '岗位知识', title: '', owner: '组织人事部', format: 'DOCX', classification: 'INTERNAL', description: '', tags: '', fileName: '', file: null });
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
   function useFile(file) {
     if (!file) return;
-    const extension = file.name.split('.').pop()?.toUpperCase() || 'DOCX';
-    setForm((current) => ({ ...current, title: current.title || file.name.replace(/\.[^.]+$/, ''), format: extension, fileName: file.name }));
+    const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    if (!['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'json'].includes(extension)) {
+      setError('暂不支持该文件类型，请选择 PDF、Office、TXT、Markdown 或 JSON 文件');
+      return;
+    }
+    if (file.size > 100 * 1024 * 1024) {
+      setError('单个知识文件不能超过 100MB');
+      return;
+    }
+    setError('');
+    setForm((current) => ({ ...current, title: current.title || file.name.replace(/\.[^.]+$/, ''), format: extension.toUpperCase(), fileName: file.name, file }));
   }
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
-    onSubmit(form);
+    setPending(true);
+    setError('');
+    try {
+      await onSubmit(form);
+    } catch (submitError) {
+      setError(submitError?.message || '知识资料保存失败，请稍后重试');
+    } finally {
+      setPending(false);
+    }
   }
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={pending ? undefined : onClose}>
       <form className="modal" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="modal-header"><div><span className="section-kicker">知识维护</span><h2>新增企业知识</h2></div><button type="button" className="icon-button" onClick={onClose}><X size={18} /></button></div>
-        <label><span>知识分类</span><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option>岗位知识</option><option>人才画像</option><option>制度流程</option></select></label>
+        <div className="modal-header"><div><span className="section-kicker">知识维护</span><h2>新增企业知识</h2></div><button type="button" className="icon-button" disabled={pending} onClick={onClose}><X size={18} /></button></div>
+        {error && <div className="service-error-banner"><AlertTriangle size={17} /><span><strong>资料未提交</strong><small>{error}</small></span></div>}
+        <label><span>知识分类</span><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option>岗位知识</option><option>人才画像</option><option>制度流程</option><option>评价标准</option></select></label>
         <label><span>资料名称</span><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如：研发岗位任职资格标准" /></label>
         <label><span>维护部门</span><select value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })}><option>组织人事部</option><option>招聘中心</option><option>人才发展中心</option><option>数字科技部</option><option>法律合规部</option></select></label>
+        <label><span>资料密级</span><select value={form.classification} onChange={(e) => setForm({ ...form, classification: e.target.value })}><option value="INTERNAL">内部资料</option><option value="CONFIDENTIAL">保密资料</option><option value="RESTRICTED">受限资料</option></select></label>
         <label><span>资料说明</span><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="说明资料的适用岗位、包含内容或使用边界" /></label>
         <label><span>业务标签</span><input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="例如：研发岗位，任职标准，面试题" /></label>
-        <label><span>知识文件</span><div className={classNames('upload-zone', form.fileName && 'has-file')} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); useFile(event.dataTransfer.files?.[0]); }}><UploadCloud size={25} /><strong>{form.fileName || '选择文件或拖放到此处'}</strong><small>{form.fileName ? `${form.format} · 已准备解析` : '支持 PDF、Word、Excel、PPT，单个文件不超过 50MB'}</small><input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => useFile(event.target.files?.[0])} /></div></label>
+        <label><span>知识文件</span><div className={classNames('upload-zone', form.fileName && 'has-file')} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); useFile(event.dataTransfer.files?.[0]); }}><UploadCloud size={25} /><strong>{form.fileName || '选择文件或拖放到此处'}</strong><small>{form.fileName ? `${form.format} · ${Math.max(1, Math.round(form.file.size / 1024))}KB` : '支持 PDF、Office、TXT、Markdown、JSON，单个文件不超过 100MB'}</small><input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.json" onChange={(event) => useFile(event.target.files?.[0])} /></div></label>
         <div className="modal-note"><ShieldCheck size={17} /><span>资料上传后不会立即用于智能体决策，需完成解析与人工复核。</span></div>
-        <div className="modal-actions"><button type="button" className="btn secondary" onClick={onClose}>取消</button><button type="submit" className="btn primary"><UploadCloud size={16} />上传并解析</button></div>
+        <div className="modal-actions"><button type="button" className="btn secondary" disabled={pending} onClick={onClose}>取消</button><button type="submit" className="btn primary" disabled={pending}>{pending ? <RefreshCw className="spin" size={16} /> : <UploadCloud size={16} />}{pending ? '正在提交' : form.file ? '上传并解析' : '保存资料条目'}</button></div>
       </form>
     </div>
   );

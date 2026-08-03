@@ -56,7 +56,7 @@ deploy/                 本地编排、Kubernetes 与环境配置
 
 目录迁移应分阶段进行。当前 `src/` 前端继续作为可运行基线，在 API 契约和模块边界稳定前不做一次性重写。
 
-当前仓库已落地 `apps/host-harness/`、`packages/embed-sdk/`、`packages/contracts/` 和 `apps/core-api/`。Core API 已完成 G1“需求草案 -> 人工确认 -> 招聘任务”、G2“岗位方案 -> 版本修改 -> 人工批准”和 G3“候选输入 -> 标准化简历 -> 硬过滤 -> 固定评分与证据”三个纵向切片，前端已调用这些服务。G2/G3 当前使用不调用 LLM/RAG 的确定性引擎；候选名单确认、面试、评价、知识检索、真实认证和 PostgreSQL 生产实例仍未完成。
+当前仓库已落地 `apps/host-harness/`、`packages/embed-sdk/`、`packages/contracts/` 和 `apps/core-api/`。Core API 已完成 G1“需求草案 -> 人工确认 -> 招聘任务”、G2“岗位方案 -> 版本修改 -> 人工批准”、G3“候选输入 -> 标准化简历 -> 硬过滤 -> 固定评分与证据”和企业知识生命周期，前端已调用这些服务。G2 可固化已发布知识版本引用，但 G2/G3 仍使用不调用 LLM/RAG 的确定性引擎；向量知识检索、候选名单确认、面试、评价、真实认证和 PostgreSQL 生产实例仍未完成。
 
 提交前运行 `npm run test:agent`、`npm run contracts:check` 与 `npm run test:embed`。Core API 使用显式 `local` profile 启动并以干净构建验证：Windows 执行 `cd apps/core-api` 后运行 `.\mvnw.cmd clean test`，Linux/macOS 运行 `./mvnw clean test`；启动命令分别为 `.\mvnw.cmd -Dspring-boot.run.profiles=local spring-boot:run` 和 `./mvnw -Dspring-boot.run.profiles=local spring-boot:run`。
 

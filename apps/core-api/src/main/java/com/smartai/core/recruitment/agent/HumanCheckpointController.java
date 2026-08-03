@@ -27,10 +27,15 @@ import jakarta.validation.Valid;
 final class HumanCheckpointController {
 
 	private final PositionPlanService service;
+	private final KnowledgeService knowledgeService;
 	private final TenantActorResolver tenantActorResolver;
 
-	HumanCheckpointController(PositionPlanService service, TenantActorResolver tenantActorResolver) {
+	HumanCheckpointController(
+			PositionPlanService service,
+			KnowledgeService knowledgeService,
+			TenantActorResolver tenantActorResolver) {
 		this.service = service;
+		this.knowledgeService = knowledgeService;
 		this.tenantActorResolver = tenantActorResolver;
 	}
 
@@ -54,13 +59,27 @@ final class HumanCheckpointController {
 			HttpServletRequest request) {
 		TenantActor actor = tenantActorResolver.resolve(request);
 		ApiRequestContext context = ApiRequestContext.from(request);
-		var result = service.decide(
-			actor, checkpointId, VersionPrecondition.require(ifMatch), idempotencyKey, body,
-			new AuditContext(context.requestId(), context.traceId()));
-		HumanCheckpoint checkpoint = result.value();
+		long expectedVersion = VersionPrecondition.require(ifMatch);
+		HumanCheckpoint current = service.getCheckpoint(actor, checkpointId);
+		HumanCheckpoint checkpoint;
+		boolean replayed;
+		if ("PUBLISH_KNOWLEDGE".equals(current.type())) {
+			var result = knowledgeService.decideReview(
+				actor, checkpointId, expectedVersion, idempotencyKey, body,
+				new KnowledgeService.AuditContext(context.requestId(), context.traceId()));
+			checkpoint = result.value();
+			replayed = result.replayed();
+		}
+		else {
+			var result = service.decide(
+				actor, checkpointId, expectedVersion, idempotencyKey, body,
+				new AuditContext(context.requestId(), context.traceId()));
+			checkpoint = result.value();
+			replayed = result.replayed();
+		}
 		return ResponseEntity.ok()
 			.eTag(Long.toString(checkpoint.version()))
-			.header("Idempotency-Replayed", Boolean.toString(result.replayed()))
+			.header("Idempotency-Replayed", Boolean.toString(replayed))
 			.body(ApiEnvelope.success(context.requestId(), context.traceId(), checkpoint));
 	}
 }
