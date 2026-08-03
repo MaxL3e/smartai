@@ -74,7 +74,8 @@ const criticalEntrypoints = [
   ['new task', /新建招聘任务<\/button>/, /onClick=\{\(\) => setTaskModalOpen\(true\)\}/],
   ['global search', /className="command-search"\s+onClick=\{onSearch\}/, /placeholder="搜索任务、候选人或知识资料"/],
   ['role plan save', /disabled=\{planSaving\}\s+onClick=\{savePlan\}/, /岗位方案尚未确认/],
-  ['G3 match', /disabled=\{matchPending\}\s+onClick=\{runServiceMatch\}/, /G3 匹配未完成/],
+  ['G3 match', /onClick=\{\(\) => parsedResumeFiles\.length \? runServiceMatch\(false\) : setResumeLibraryOpen\(true\)\}/, /G3 匹配未完成/],
+  ['resume library', /onClick=\{\(\) => setResumeLibraryOpen\(true\)\}/, /title="独立简历库" eyebrow="真实候选输入"/],
   ['candidate confirmation', /onClick=\{confirmSelection\}/, /名单确认与推荐报告尚未后端化/],
   ['interview reservation', /view === 'interviews' && <ReservedCapability type="interview"/, /不发送邀请，不调用消息或在线面试平台/],
   ['evaluation reservation', /view === 'evaluation' && <ReservedCapability type="evaluation"/, /不生成虚构面试分或测评分/],
@@ -102,12 +103,34 @@ assertSource(
   'G3 must generate demo inputs before service results exist instead of treating an empty array as a completed empty run.',
 );
 assertSource(
-  /serviceMatchEmpty[\s\S]*?重新运行 G3[\s\S]*?重新导入并运行/,
+  /serviceMatchEmpty[\s\S]*?上次运行没有产生推荐结果[\s\S]*?runServiceMatch\(false\)/,
   'An empty G3 run must offer a visible retry path.',
 );
 assertSource(
   /if \(activeTask\.stage !== '人才搜索' \|\| serviceTask\) return undefined;/,
   'Service tasks must never use the local timer to fake a completed talent search.',
+);
+assert.doesNotMatch(
+  appSource,
+  /fixtures\[index\]|\|\| candidatesSeed\[0\]/,
+  'G3 results must never fall back to a positional or seeded candidate fixture.',
+);
+assertSource(
+  /fixtures\.find\(\(person\) => person\.candidateId === result\.candidate\.id\)[\s\S]{0,100}\|\| unmatchedServiceCandidate\(result\)/,
+  'G3 results must use a resume-free placeholder when candidate identity cannot be resolved.',
+);
+assertSource(
+  /evidenceKind: hasSourceEvidence \? 'SOURCE' : 'SYSTEM'/,
+  'G3 evidence mapping must distinguish source evidence from system assessment.',
+);
+assertSource(
+  /sourceEvidenceCount[\s\S]{0,180}项有原文证据/,
+  'Candidate details must report the actual source-evidence count.',
+);
+assert.doesNotMatch(
+  appSource,
+  /全部结论均有原文证据/,
+  'Candidate details must not claim that every conclusion has source evidence.',
 );
 
 const server = await createServer({

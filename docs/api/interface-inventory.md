@@ -85,7 +85,7 @@
 | ID | 输入/输出 | 协议与方向 | 数据权威 | 权限/人工门禁 | 幂等/版本要求 | MVP | 契约引用 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | MAT-01 | 从 ATS/人才库按结构化条件检索候选人和简历 | HTTPS REST，平台 -> 连接器（出） | 候选人/简历原始事实由 ATS/人才库权威 | `RESUME_SEARCH` + 候选授权范围；禁止模型生成自由 SQL | `Idempotency-Key`；稳定游标、`updatedAfter`、查询哈希和来源版本 | P0 | `[INT] POST /resume-searches`；[INT §6.3](./integration-contract.md#63-候选人与简历库) |
-| MAT-02 | 同步候选、简历版本和受控附件引用 | HTTPS REST/Webhook/文件，连接器 -> 平台（入） | ATS/人才库权威；平台保留不可变来源版本 | 最小字段、目的限制、附件短链/加密流；写入搜索索引前脱敏 | 外部引用 + sourceVersion 唯一；附件校验哈希；旧版本不覆盖新版本 | P0 | `[INT] GET /candidates, /resumes/{resumeId}`；`[AAS] integrationNormalizedV1` |
+| MAT-02 | 上传或同步候选、简历版本和受控附件引用 | HTTPS REST/Webhook/文件，独立工作台或连接器 -> 平台（入） | 独立上传由平台权威；ATS/人才库同步数据由来源系统权威；平台保留不可变来源版本 | PDF/DOC/DOCX/TXT 白名单、大小与内容校验、最小字段和目的限制；写入搜索索引前脱敏 | `Idempotency-Key + SHA-256 + fileVersion/sourceVersion`；旧版本不覆盖新版本 | P0 | `[OAS] createResumeFile/listResumeFiles/getResumeFile`；`[INT] GET /candidates, /resumes/{resumeId}`；`[AAS] integrationNormalizedV1` |
 | MAT-03 | 发起匹配运行：任务、岗位方案版本、候选范围和策略 | HTTPS REST，嵌入端 -> 平台（入） | 平台 `MatchRun` 权威 | 招聘 HR；仅批准或明确允许试算的方案版本；候选范围需授权 | `Idempotency-Key + If-Match`；记录 input snapshot/hash、算法/规则版本 | P0 | `[OAS] createMatchRun`；[DOMAIN §7.3](../architecture/domain-model.md#73-matchrun) |
 | MAT-04 | 执行召回、证据提取与结构化信号生成 | AMQP，Core -> AI -> Core（双向） | 原始简历由来源权威；证据定位/抽取为平台派生 | AI 输入去除不必要 PII；只允许声明的结果 Schema | `businessKey + inputHash + workflowVersion`；每步 Inbox/Outbox 幂等 | P0 | `[AAS] aiCommandsV1(TALENT_RETRIEVE/EVIDENCE_EXTRACT)`、`aiResultsV1` |
 | MAT-05 | 应用硬条件、固定权重评分和推荐等级 | 平台内部命令/领域事件（内部） | 确定性规则执行结果由平台权威 | 模型不得自由决定总分、硬淘汰或推荐阈值；规则版本可审计 | `taskCandidate + resumeVersion + scorecardVersion + algorithmVersion` 唯一 | P0 | `[DOMAIN] MatchResult`；`[AAS] domainEventsV1(MatchRunCompleted.v1)` |

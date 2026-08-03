@@ -19,6 +19,7 @@
     { "name": "RecruitmentTasks", "description": "招聘任务及三层状态" },
     { "name": "PositionPlans", "description": "岗位方案、评分卡和人工审核" },
     { "name": "JobPublications", "description": "经过人工门禁的外部岗位发布" },
+    { "name": "ResumeFiles", "description": "独立工作台的简历原件、解析状态和不可变简历版本" },
     { "name": "Matching", "description": "候选关系、匹配运行、结果和证据" },
     { "name": "CandidateLists", "description": "人工确认的候选人名单版本" },
     { "name": "Interviews", "description": "在线面试批次、邀请和结果" },
@@ -706,6 +707,107 @@
             "headers": { "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateInputResponse" } } }
           },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/resume-files": {
+      "get": {
+        "tags": ["ResumeFiles"],
+        "summary": "分页读取当前租户的简历文件",
+        "description": "按租户和数据权限返回简历原件元数据及解析状态。列表仅承载检索摘要：extractedText 和 candidateReceipt 返回 null，evidence、邮箱、电话和解析证据返回空数组；正文与证据仅由详情接口按权限返回。",
+        "operationId": "listResumeFiles",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "parseStatus", "in": "query", "schema": { "$ref": "#/components/schemas/ResumeParseStatus" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "简历文件页",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResumeFilePageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["ResumeFiles"],
+        "summary": "上传简历原件并创建不可变简历版本",
+        "description": "接收单个 PDF、DOC、DOCX 或 TXT 文件。调用上传即表示当前租户操作者确认企业有权将该简历用于招聘处理、智能匹配与人工复核；服务端会把操作者和确认时间写入审计。服务端计算 SHA-256 并保存不可变原件版本。解析成功时创建或更新候选人与不可变 ResumeVersion；解析失败仍以 201 持久化原件，返回 PARSE_FAILED、failureCode 和 retryable，且不得伪造 extractedText、evidence、candidate 或 resumeVersionRef。相同 Idempotency-Key 和相同文件及来源字段摘要返回首次结果。",
+        "operationId": "createResumeFile",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestId" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": { "$ref": "#/components/schemas/ResumeFileUploadRequest" },
+              "encoding": {
+                "file": {
+                  "contentType": "application/pdf, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "简历原件和不可变简历版本已创建，data.parseStatus 表示真实解析结果",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "Idempotency-Replayed": { "$ref": "#/components/headers/IdempotencyReplayed" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResumeFileResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/VersionConflict" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/resume-files/{resumeFileId}": {
+      "get": {
+        "tags": ["ResumeFiles"],
+        "summary": "读取简历原件、解析正文和证据",
+        "description": "资源按租户隔离。解析失败时 candidate、resumeVersionRef 和 candidateReceipt 为 null；没有正文权限时 extractedText 为 null 或省略，evidence 仅保留允许披露的定位。",
+        "operationId": "getResumeFile",
+        "parameters": [
+          { "$ref": "#/components/parameters/ResumeFileId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "简历文件详情",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResumeFileResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/InternalServerError" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" },
+          "504": { "$ref": "#/components/responses/GatewayTimeout" },
           "default": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -1895,6 +1997,7 @@
       "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "PlanVersionId": { "name": "planVersionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "AgentRunId": { "name": "agentRunId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "ResumeFileId": { "name": "resumeFileId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "MatchRunId": { "name": "matchRunId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "MatchResultId": { "name": "matchResultId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
       "BatchId": { "name": "batchId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
@@ -1947,6 +2050,14 @@
       },
       "PreconditionRequired": {
         "description": "修改版本化资源时缺少 If-Match",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "PayloadTooLarge": {
+        "description": "上传文件超过服务端允许的大小",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "UnsupportedMediaType": {
+        "description": "请求媒体类型不受支持",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
       },
       "RateLimited": {
@@ -2043,7 +2154,7 @@
       },
       "ErrorCode": {
         "type": "string",
-        "enum": ["VALIDATION_FAILED", "AUTH_FAILED", "PERMISSION_DENIED", "RESOURCE_NOT_FOUND", "STATE_NOT_ALLOWED", "VERSION_CONFLICT", "PRECONDITION_REQUIRED", "IDEMPOTENCY_CONFLICT", "HUMAN_GATE_REQUIRED", "RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TIMEOUT", "MAPPING_FAILED", "UNSUPPORTED_CAPABILITY", "CONTEXT_EXPIRED", "CONTEXT_FORBIDDEN", "EMBED_ORIGIN_DENIED", "TOKEN_REPLAYED", "SCHEMA_VERSION_UNSUPPORTED", "INTERNAL_ERROR"]
+        "enum": ["VALIDATION_FAILED", "AUTH_FAILED", "PERMISSION_DENIED", "RESOURCE_NOT_FOUND", "STATE_NOT_ALLOWED", "VERSION_CONFLICT", "PRECONDITION_REQUIRED", "IDEMPOTENCY_CONFLICT", "HUMAN_GATE_REQUIRED", "RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "TIMEOUT", "MAPPING_FAILED", "UNSUPPORTED_CAPABILITY", "CONTEXT_EXPIRED", "CONTEXT_FORBIDDEN", "EMBED_ORIGIN_DENIED", "TOKEN_REPLAYED", "SCHEMA_VERSION_UNSUPPORTED", "RESUME_FILE_READ_FAILED", "RESUME_FILE_EMPTY", "RESUME_FILE_TOO_LARGE", "RESUME_FILE_NOT_FOUND", "UNSUPPORTED_MEDIA_TYPE", "INTERNAL_ERROR"]
       },
       "ExternalRef": {
         "type": "object",
@@ -2720,6 +2831,107 @@
         "allOf": [
           { "$ref": "#/components/schemas/SuccessEnvelope" },
           { "properties": { "data": { "$ref": "#/components/schemas/CandidateInputReceipt" } } }
+        ]
+      },
+      "ResumeMimeType": {
+        "type": "string",
+        "enum": [
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "text/plain"
+        ]
+      },
+      "ResumeParseStatus": {
+        "type": "string",
+        "enum": ["PARSED", "PARSE_FAILED"],
+        "description": "当前上传端点同步执行解析，因此响应只会是终态。"
+      },
+      "ResumeFileUploadRequest": {
+        "type": "object",
+        "required": ["file"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "description": "单个 PDF、DOC、DOCX 或 UTF-8 TXT 简历文件，最大 20 MiB。",
+            "x-smartai-allowed-mime-types": [
+              "application/pdf",
+              "application/msword",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "text/plain"
+            ],
+            "x-smartai-max-size-bytes": 20971520
+          },
+          "sourceSystem": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$", "default": "smartai.resume-library", "description": "可选来源系统标识；服务端去除首尾空白并转换为小写。" },
+          "externalCandidateId": { "type": "string", "minLength": 1, "maxLength": 256, "description": "可选来源候选人标识；省略时服务端使用 resume-{sha256}。" }
+        },
+        "additionalProperties": false
+      },
+      "ResumeEvidence": {
+        "type": "object",
+        "required": ["field", "section", "quote", "startOffset", "endOffset"],
+        "properties": {
+          "field": { "type": "string", "enum": ["name", "email", "phone", "educationLevel", "experienceYears", "skill", "location"] },
+          "section": { "type": "string", "enum": ["HEADER", "CONTACT", "EDUCATION", "EXPERIENCE", "SKILLS", "LOCATION"] },
+          "quote": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "startOffset": { "type": "integer", "minimum": 0 },
+          "endOffset": { "type": "integer", "minimum": 0, "description": "服务端保证大于等于 startOffset。" }
+        },
+        "additionalProperties": false
+      },
+      "ParsedResumeProfile": {
+        "type": "object",
+        "required": ["name", "emails", "phones", "educationLevel", "experienceYears", "skills", "location", "evidence"],
+        "properties": {
+          "name": { "type": ["string", "null"], "maxLength": 80 },
+          "emails": { "type": "array", "items": { "type": "string", "maxLength": 320 }, "uniqueItems": true, "maxItems": 20 },
+          "phones": { "type": "array", "items": { "type": "string", "maxLength": 40 }, "uniqueItems": true, "maxItems": 20 },
+          "educationLevel": { "type": ["string", "null"], "maxLength": 80 },
+          "experienceYears": { "type": ["number", "null"], "minimum": 0, "maximum": 80 },
+          "skills": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 100 }, "uniqueItems": true, "maxItems": 100 },
+          "location": { "type": ["string", "null"], "maxLength": 100 },
+          "evidence": { "type": "array", "items": { "$ref": "#/components/schemas/ResumeEvidence" }, "maxItems": 500 }
+        },
+        "additionalProperties": false
+      },
+      "ResumeFile": {
+        "type": "object",
+        "required": ["id", "fileVersion", "originalFileName", "mimeType", "sizeBytes", "sha256", "parseStatus", "failureCode", "parserVersion", "retryable", "evidence", "parsedProfile", "candidate", "resumeVersionRef", "candidateReceipt", "sourceSystem", "externalCandidateId", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "fileVersion": { "$ref": "#/components/schemas/Version", "description": "原件的不可变文件版本；服务端不得原地覆盖同一版本内容。" },
+          "originalFileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "mimeType": { "oneOf": [{ "$ref": "#/components/schemas/ResumeMimeType" }, { "type": "null" }], "description": "内容检测得到的 MIME；检测器在解析前失败时为 null。" },
+          "sizeBytes": { "type": "integer", "minimum": 1, "maximum": 20971520 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "parseStatus": { "$ref": "#/components/schemas/ResumeParseStatus" },
+          "failureCode": { "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{1,99}$" },
+          "parserVersion": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "retryable": { "type": "boolean", "description": "仅描述解析失败是否值得重试，不代表服务端已自动排队。" },
+          "extractedText": { "type": ["string", "null"], "maxLength": 500000, "description": "详情和上传响应在解析成功时返回；列表中为 null，兼容实现可省略该字段。" },
+          "evidence": { "type": "array", "items": { "$ref": "#/components/schemas/ResumeEvidence" }, "maxItems": 500, "description": "确定性字段抽取的正文定位；解析失败时必须为空。" },
+          "parsedProfile": { "$ref": "#/components/schemas/ParsedResumeProfile" },
+          "candidate": { "oneOf": [{ "$ref": "#/components/schemas/CandidateSummary" }, { "type": "null" }] },
+          "resumeVersionRef": { "oneOf": [{ "$ref": "#/components/schemas/ResourceRef" }, { "type": "null" }] },
+          "candidateReceipt": { "oneOf": [{ "$ref": "#/components/schemas/CandidateInputReceipt" }, { "type": "null" }] },
+          "sourceSystem": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$" },
+          "externalCandidateId": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ResumeFileResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/ResumeFile" } } }
+        ]
+      },
+      "ResumeFilePageResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/ResumeFile" } }, "meta": { "$ref": "#/components/schemas/PageMeta" } } }
         ]
       },
       "TaskCandidate": {

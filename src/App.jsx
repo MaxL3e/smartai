@@ -90,6 +90,14 @@ import {
   updateKnowledgeDocument,
   uploadKnowledgeDocument,
 } from './services/knowledgeService.js';
+import {
+  STANDALONE_RESUME_CONNECTOR_ID,
+  getResumeFile,
+  isResumeServiceUnavailable,
+  listResumeFiles,
+  resumeParseStatusLabel,
+  uploadResumeFile,
+} from './services/resumeFiles.js';
 
 const navItems = [
   { id: 'workspace', label: '智能体工作台', icon: LayoutDashboard },
@@ -598,19 +606,89 @@ function buildDemoCandidateInput(person, index, task) {
   };
 }
 
+function resumeRecordToFixture(record, index, task) {
+  const candidate = record.candidate || {};
+  const profile = record.parsedProfile || {};
+  const displayName = candidate.displayName || profile.name || record.fileName.replace(/\.[^.]+$/, '');
+  const skills = Array.isArray(profile.skills) ? profile.skills : [];
+  const sourceEvidence = Array.isArray(record.evidence) ? record.evidence : [];
+  const plan = getRolePlan(task);
+  const evidence = plan.scoreRules.map((rule) => {
+    const source = sourceEvidence.find((item) => item.criterionCode === rule.code || item.label === rule.label);
+    return {
+      label: rule.label,
+      value: 0,
+      max: rule.weight,
+      quote: source?.quote || source?.text || '等待 G3 按岗位评分卡提取并定位原文证据',
+    };
+  });
+  return {
+    id: record.id,
+    candidateId: candidate.id || null,
+    name: displayName,
+    initials: displayName.slice(0, 1),
+    title: '待从简历核验',
+    company: '待从简历核验',
+    years: Number.isFinite(Number(profile.experienceYears)) ? `${profile.experienceYears}年` : '待核验',
+    education: profile.educationLevel || '待核验',
+    school: '待核验',
+    location: profile.location || '待核验',
+    score: 0,
+    status: '待匹配',
+    tone: 'gray',
+    highlights: skills,
+    risks: ['等待 G3 生成待核实项'],
+    evidence,
+    resumeFile: record,
+    resumeVersionRef: record.resumeVersionRef || null,
+    resumeIndex: index,
+  };
+}
+
+function unmatchedServiceCandidate(result) {
+  const displayName = result.candidate?.displayName || '姓名待核实';
+  return {
+    id: result.taskCandidateRef?.id || result.candidate?.id,
+    candidateId: result.candidate?.id || null,
+    name: displayName,
+    initials: displayName.slice(0, 1),
+    title: '待从服务端简历核验',
+    company: '待核验',
+    years: '待核验',
+    education: '待核验',
+    school: '待核验',
+    location: '待核验',
+    score: 0,
+    status: '待匹配',
+    tone: 'gray',
+    highlights: [],
+    risks: ['候选人未关联到当前简历库，请核实数据范围'],
+    evidence: [],
+    resumeFile: null,
+    resumeVersionRef: result.resumeVersionRef || null,
+  };
+}
+
 function mapServiceMatchResults(envelope, fixtures, task) {
   const results = envelope?.data || [];
   const rulesByCode = new Map((task.planScoreRules || []).map((rule) => [rule.code, rule]));
-  return results.map((result, index) => {
-    const fixture = fixtures.find((person) => person.name === result.candidate.displayName) || fixtures[index] || candidatesSeed[0];
+  return results.map((result) => {
+    const fixture = fixtures.find((person) => person.candidateId === result.candidate.id)
+      || unmatchedServiceCandidate(result);
     const recommendation = recommendationForScore(Number(result.totalScore), task.planThresholds || defaultPlanThresholds);
     const evidence = result.criterionScores.map((criterion) => {
       const rule = rulesByCode.get(criterion.criterionCode);
+      const sourceEvidence = criterion.evidenceRefs?.find((item) => item?.quote) || null;
+      const hasSourceEvidence = Boolean(sourceEvidence);
       return {
         label: rule?.label || criterion.criterionCode,
         value: Number(criterion.weightedScore),
         max: Number(rule?.weight || 100 / Math.max(1, result.criterionScores.length)),
-        quote: criterion.evidenceRefs?.[0]?.quote || criterion.explanation || '该维度暂无可定位证据',
+        quote: sourceEvidence?.quote || null,
+        explanation: criterion.explanation || '该维度暂无可定位证据',
+        evidenceKind: hasSourceEvidence ? 'SOURCE' : 'SYSTEM',
+        hasSourceEvidence,
+        sourceLocator: sourceEvidence?.sourceLocator || null,
       };
     });
     const supported = result.criterionScores
@@ -620,6 +698,8 @@ function mapServiceMatchResults(envelope, fixtures, task) {
     return {
       ...fixture,
       id: result.taskCandidateRef.id,
+      candidateId: result.candidate.id,
+      resumeVersionRef: result.resumeVersionRef || fixture.resumeVersionRef || fixture.resumeFile?.resumeVersionRef || null,
       name: result.candidate.displayName,
       initials: result.candidate.displayName.slice(0, 1),
       score: Math.round(Number(result.totalScore)),
@@ -2142,8 +2222,8 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           {flowStep < 2 ? (
             <div className="workspace-gate">
               <span className={classNames('workspace-gate-icon', flowStep === 1 && 'searching')}>{flowStep === 0 ? <FileText size={26} /> : <Search size={26} />}</span>
-              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : serviceNeedsMatch ? 'G3 服务端能力' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : serviceMatchEmpty ? '上次匹配没有结果' : serviceNeedsMatch ? '候选匹配已就绪' : '人才匹配已完成'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : serviceMatchEmpty ? '上次运行扫描数为 0，任务不会自动推进。请重新导入演示样本并运行 G3。' : serviceNeedsMatch ? '可先用虚构候选样本验证标准化输入、硬条件过滤、固定评分和证据解释；当前将继续完善独立简历库，外部候选来源仅保留适配接口。' : `已应用“${activeTask.role}评分卡”完成固定评分和证据映射。`}</p></div>
-              <div className="workspace-gate-meta"><span><ShieldCheck size={15} />{serviceNeedsMatch ? 'G1/G2 已服务端确认' : '岗位方案与规则版本已绑定'}</span><span><History size={15} />{serviceMatchEmpty ? '保留上次空结果运行记录' : serviceNeedsMatch ? '等待运行演示输入适配器' : 'G3 结果已写入运行审计'}</span></div>
+              <div><span className="section-kicker">{flowStep === 0 ? '等待人工确认' : serviceNeedsMatch ? 'G3 服务端能力' : '智能体自动执行'}</span><h2>{flowStep === 0 ? '岗位方案已生成' : serviceMatchEmpty ? '上次匹配没有结果' : serviceNeedsMatch ? '候选匹配已就绪' : '人才匹配已完成'}</h2><p>{flowStep === 0 ? '请确认岗位职责、任职标准与人才推荐评分卡，确认后智能体才会开始检索候选人。' : serviceMatchEmpty ? '上次运行没有产生推荐结果。请检查独立简历库中的解析状态、岗位硬条件和推荐阈值后重新运行。' : serviceNeedsMatch ? '进入独立简历库上传或选择已解析简历，智能体将执行硬条件过滤、固定评分和原文证据解释；虚构样本仅保留为次级演示入口。' : `已应用“${activeTask.role}评分卡”完成固定评分和证据映射。`}</p></div>
+              <div className="workspace-gate-meta"><span><ShieldCheck size={15} />{serviceNeedsMatch ? 'G1/G2 已服务端确认' : '岗位方案与规则版本已绑定'}</span><span><History size={15} />{serviceMatchEmpty ? '保留上次空结果运行记录' : serviceNeedsMatch ? '等待读取独立简历库' : 'G3 结果已写入运行审计'}</span></div>
               {flowStep === 0 ? <button className="btn primary" onClick={() => setView('roleplan')}>审核岗位方案 <ArrowRight size={17} /></button> : serviceNeedsMatch ? <button className="btn primary" onClick={() => setView('talent')}>{serviceMatchEmpty ? '重新运行 G3' : '运行 G3 匹配'} <ArrowRight size={16} /></button> : <button className="btn secondary" onClick={() => setView('audit')}>查看运行记录 <Activity size={16} /></button>}
             </div>
           ) : <>
@@ -2705,7 +2785,7 @@ function GlobalSearch({ tasks, candidates, knowledge, onClose, onNavigate }) {
 }
 
 function DetailDialog({ dialog, onClose, context }) {
-  const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, requestKnowledgeReview, uploadKnowledgeVersion, publishKnowledge, deactivateKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy } = context;
+  const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, requestKnowledgeReview, uploadKnowledgeVersion, publishKnowledge, deactivateKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy, getAccessToken } = context;
   if (dialog.type === 'help') return <DialogShell title="演示帮助中心" eyebrow="产品帮助" onClose={onClose}><div className="help-grid"><div><span>01</span><strong>创建招聘任务</strong><p>录入需求后，智能体会生成岗位方案、评分卡和知识引用。</p></div><div><span>02</span><strong>确认人才名单</strong><p>查看候选人匹配证据，调整策略并形成推荐名单。</p></div><div><span>03</span><strong>生成推荐结果</strong><p>保存候选名单草稿，后续生成服务端确认版本和推荐报告。</p></div><div><span>04</span><strong>维护企业知识</strong><p>新增、复核和归档岗位知识、人才画像与制度流程。</p></div></div><div className="dialog-note"><ShieldCheck size={17} />演示数据均为虚构数据，所有修改仅保存在当前浏览器。</div></DialogShell>;
   if (dialog.type === 'runtime-info') return <DialogShell title="独立招聘智能体" eyebrow="当前产品主线" onClose={onClose}><div className="rule-dialog-list">{[['需求与岗位','通过自然语言整理招聘需求，生成岗位方案和评分标准'],['企业知识','维护历史 JD、用人标准和人才画像，记录版本与引用'],['人才匹配','在独立简历库中完成硬条件过滤、固定评分和证据解释'],['人工确认','确认岗位方案与候选名单，导出可追溯的推荐结果']].map(([title, text]) => <div key={title}><span><Bot size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div><div className="dialog-note"><AlertTriangle size={17} />ATS 与在线面试平台当前仅保留接口契约和扩展点，不参与本阶段功能验收。</div></DialogShell>;
   if (dialog.type === 'enterprise') return <DialogShell title="企业空间" eyebrow="当前租户" onClose={onClose}><div className="enterprise-dialog"><span className="enterprise-logo"><Building2 size={23} /></span><div><strong>华岳能源集团</strong><p>集团招聘智能体演示环境</p></div></div><div className="detail-list"><div><span>组织范围</span><strong>集团总部及 12 家下属企业</strong></div><div><span>数据环境</span><strong>演示数据 · 本地存储</strong></div><div><span>知识权限</span><strong>组织人事部 / 招聘中心</strong></div></div><div className="dialog-note"><LockKeyhole size={17} />正式接入客户系统后，企业空间将隔离任务、人才与知识数据。</div></DialogShell>;
@@ -2713,7 +2793,7 @@ function DetailDialog({ dialog, onClose, context }) {
   if (dialog.type === 'governance') return <DialogShell title="知识治理规则" eyebrow="知识库管理" onClose={onClose}><div className="rule-dialog-list">{[['上传检查','识别候选人隐私、敏感属性、重复资料和文件有效期'],['解析复核','新资料默认进入待复核状态，确认后才参与智能体检索'],['版本管理','保留资料版本、维护部门、更新时间和引用记录'],['画像约束','只使用能力与行为证据，不使用受保护或非岗位相关属性']].map(([title, text]) => <div key={title}><span><ShieldCheck size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
   if (dialog.type === 'task-edit') { const task = dialog.task || activeTask; return <TaskEditDialog task={task} onClose={onClose} onSave={(changes) => { updateTask(task.code, changes); onClose(); }} onArchive={() => task.archived ? restoreTask(task.code) : archiveTask(task.code)} />; }
   if (dialog.type === 'knowledge') return <KnowledgeDetailDialog item={dialog.item} onClose={onClose} onSave={(changes) => updateKnowledge(dialog.item.id, changes)} onArchive={() => dialog.item.archived ? restoreKnowledge(dialog.item.id) : removeKnowledge(dialog.item.id)} onUpload={(file) => uploadKnowledgeVersion(dialog.item.id, file)} onReview={() => requestKnowledgeReview(dialog.item.id)} onPublish={() => publishKnowledge(dialog.item.id)} onDeactivate={() => deactivateKnowledge(dialog.item.id)} />;
-  if (dialog.type === 'resume') return <DialogShell title={`${dialog.person.name} · 简历原文`} eyebrow="候选人档案" onClose={onClose} wide actions={<button className="btn primary" onClick={() => { downloadText(`${dialog.person.name}-简历.txt`, buildResumeText(dialog.person)); notify('简历已下载'); }}><Download size={16} />下载简历</button>}><ResumeDocument person={dialog.person} highlight={dialog.highlight} /></DialogShell>;
+  if (dialog.type === 'resume') return <ResumeDetailDialog person={dialog.person} highlight={dialog.highlight} onClose={onClose} notify={notify} accessToken={getAccessToken?.()} />;
   if (dialog.type === 'scorecard') return <DialogShell title="人才匹配评分卡" eyebrow="当前岗位规则" onClose={onClose}><ScorecardDetail task={activeTask} strategy={dialog.strategy || matchStrategy} /></DialogShell>;
   if (dialog.type === 'scorecard-edit') return <RoleScorecardDialog task={activeTask} onClose={onClose} onSave={({ rules, thresholds }) => {
     updateActiveTask({ planScoreRules: rules, planThresholds: thresholds });
@@ -2874,10 +2954,50 @@ function KnowledgeDetailDialog({ item, onClose, onSave, onArchive, onUpload, onR
 }
 
 function buildResumeText(person) {
-  return [`候选人：${person.name}`, `当前岗位：${person.title}`, `当前公司：${person.company}`, `工作经验：${person.years}`, `最高学历：${person.education} · ${person.school}`, '', '核心经历与成果', ...person.evidence.map((item) => `- ${item.label}：${item.quote}`), '', `推荐依据：${person.highlights.join('、')}`, `待核实项：${person.risks.join('、')}`].join('\n');
+  if (person.resumeFile?.extractedText) return person.resumeFile.extractedText;
+  return [`候选人：${person.name}`, `当前岗位：${person.title}`, `当前公司：${person.company}`, `工作经验：${person.years}`, `最高学历：${person.education} · ${person.school}`, '', '核心经历与成果', ...person.evidence.map((item) => item.hasSourceEvidence === false ? `- ${item.label}（系统判定）：${item.explanation}` : `- ${item.label}：${item.quote}`), '', `推荐依据：${person.highlights.join('、')}`, `待核实项：${person.risks.join('、')}`].join('\n');
+}
+
+function ResumeDetailDialog({ person: initialPerson, highlight, onClose, notify, accessToken }) {
+  const [person, setPerson] = useState(initialPerson);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [retryToken, setRetryToken] = useState(0);
+  const requiresDetail = Boolean(person.resumeFile?.serviceBacked && person.resumeFile?.id && !person.resumeFile?.extractedText);
+
+  useEffect(() => {
+    if (!requiresDetail) return undefined;
+    let active = true;
+    setLoading(true);
+    setError('');
+    getResumeFile(person.resumeFile.id, { accessToken })
+      .then((resumeFile) => {
+        if (active) setPerson((current) => ({ ...current, resumeFile }));
+      })
+      .catch((detailError) => {
+        if (active) setError(detailError?.message || '简历原文读取失败，请稍后重试');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [accessToken, person.resumeFile?.id, requiresDetail, retryToken]);
+
+  const canDownload = !person.resumeFile?.serviceBacked || Boolean(person.resumeFile?.extractedText);
+  const actions = <><button className="btn secondary" onClick={onClose}>关闭</button><button className="btn primary" disabled={loading || !canDownload} onClick={() => { downloadText(`${person.name}-简历.txt`, buildResumeText(person)); notify('简历已下载'); }}><Download size={16} />下载简历</button></>;
+  return <DialogShell title={`${person.name} · 简历原文`} eyebrow="候选人档案" onClose={onClose} wide actions={actions}>
+    {loading
+      ? <div className="empty-state compact"><RefreshCw className="spin" size={20} /><strong>正在读取服务端简历原文</strong><span>将按当前租户权限加载不可变版本内容。</span></div>
+      : error
+        ? <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>简历原文读取失败</strong><small>{error}</small></span><button className="btn secondary" onClick={() => setRetryToken((value) => value + 1)}>重试</button></div>
+        : <ResumeDocument person={person} highlight={highlight} />}
+  </DialogShell>;
 }
 
 function ResumeDocument({ person, highlight }) {
+  if (person.resumeFile?.extractedText) {
+    return <div className="resume-document service-resume-document"><header><div><h3>{person.name}</h3><p>{person.resumeFile.fileName} · 原件版本 v{person.resumeFile.fileVersion}</p></div><span>{person.resumeFile.parseStatus}</span></header><pre>{person.resumeFile.extractedText}</pre></div>;
+  }
   return <div className="resume-document"><header><div><h3>{person.name}</h3><p>{person.title} · {person.company}</p></div><span>{person.education} · {person.years}</span></header><section><h4>个人概况</h4><p>具备扎实的专业基础和复杂项目实践经验，能够独立承担核心工作并协同多方推动项目交付。</p></section><section><h4>工作经历</h4>{person.evidence.map((item) => <div className={item.label === highlight ? 'highlight' : ''} key={item.label}><strong>{item.label}</strong><p>{item.quote}</p></div>)}</section><section><h4>专业能力</h4><div className="tag-list">{person.highlights.map((item) => <span key={item}>{item}</span>)}</div></section></div>;
 }
 
@@ -2892,12 +3012,54 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
   const [onlySelected, setOnlySelected] = useState(false);
   const [matchPending, setMatchPending] = useState(false);
   const [matchError, setMatchError] = useState('');
+  const [resumeFiles, setResumeFiles] = useState([]);
+  const [resumeLibraryOpen, setResumeLibraryOpen] = useState(false);
+  const [resumeLoading, setResumeLoading] = useState(true);
+  const [resumeError, setResumeError] = useState('');
+  const [uploadQueue, setUploadQueue] = useState([]);
   const matchOperationKeysRef = useRef(new Map());
+  const parsedResumeFiles = useMemo(() => resumeFiles.filter((item) => item.parseStatusCode === 'PARSED' && item.candidate), [resumeFiles]);
+  const resumeFixtures = useMemo(() => parsedResumeFiles.map((record, index) => resumeRecordToFixture(record, index, activeTask)), [parsedResumeFiles, activeTask]);
   const selected = candidatePool.find((item) => item.id === selectedCandidate) || candidatePool[0];
   const serviceMatchNotStarted = activeTask.creationMode === 'service' && activeTask.planConfirmed && !activeTask.serviceMatchRun;
   const serviceMatchEmpty = activeTask.creationMode === 'service' && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
   const filteredCandidates = useMemo(() => candidatePool.filter((person) => person.score >= Number(minScore) && (!onlySelected || selectedCandidates.includes(person.id)) && `${person.name}${person.title}${person.company}${person.highlights.join('')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => matchStrategy.sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : b.score - a.score), [candidatePool, query, minScore, onlySelected, selectedCandidates, matchStrategy.sort]);
   useEffect(() => setMinScore(matchStrategy.minScore || 70), [matchStrategy.minScore]);
+  useEffect(() => { refreshResumeLibrary(); }, []);
+
+  async function refreshResumeLibrary() {
+    setResumeLoading(true);
+    setResumeError('');
+    try {
+      setResumeFiles(await listResumeFiles({ accessToken: getAccessToken?.() }));
+    } catch (error) {
+      const unavailable = isResumeServiceUnavailable(error);
+      setResumeError(unavailable ? '简历服务未连接，请先启动 Core API。' : (error.message || '简历库读取失败'));
+    } finally {
+      setResumeLoading(false);
+    }
+  }
+
+  async function uploadFiles(files) {
+    const selectedFiles = Array.from(files || []);
+    if (!selectedFiles.length) return;
+    const queued = selectedFiles.map((file) => ({ id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()}`, file, status: '等待上传', error: '' }));
+    setUploadQueue((current) => [...queued, ...current].slice(0, 30));
+    setResumeError('');
+    for (const item of queued) {
+      setUploadQueue((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: '上传并解析中' } : entry));
+      try {
+        const uploaded = await uploadResumeFile(item.file, {
+          accessToken: getAccessToken?.(),
+          idempotencyKey: matchOperationKey(`resume:${item.file.name}:${item.file.size}:${item.file.lastModified}`),
+        });
+        setResumeFiles((current) => [uploaded, ...current.filter((entry) => entry.id !== uploaded.id)]);
+        setUploadQueue((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: uploaded.parseStatus, result: uploaded } : entry));
+      } catch (error) {
+        setUploadQueue((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: '上传失败', error: error.message || '文件处理失败' } : entry));
+      }
+    }
+  }
 
   function matchOperationKey(identity) {
     if (!matchOperationKeysRef.current.has(identity)) {
@@ -2906,28 +3068,35 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
     return matchOperationKeysRef.current.get(identity);
   }
 
-  async function runServiceMatch() {
+  async function runServiceMatch(useDemoSamples = false) {
     if (matchPending || !activeTask.servicePlan?.id) return;
+    if (!useDemoSamples && !resumeFixtures.length) {
+      setResumeLibraryOpen(true);
+      notify('请先上传至少一份可解析的真实简历');
+      return;
+    }
     setMatchPending(true);
     setMatchError('');
     try {
       const accessToken = getAccessToken?.();
-      const fixtures = getCandidates({ ...activeTask, serviceMatchResults: null });
-      await Promise.all(fixtures.map((person, index) => {
-        const input = buildDemoCandidateInput(person, index, activeTask);
-        return submitCandidateInput(input, {
-          accessToken,
-          idempotencyKey: matchOperationKey(`candidate:${input.externalCandidateId}:${input.sourceVersion}`),
-        });
-      }));
+      const fixtures = useDemoSamples ? getCandidates({ ...activeTask, serviceMatchResults: null }) : resumeFixtures;
+      if (useDemoSamples) {
+        await Promise.all(fixtures.map((person, index) => {
+          const input = buildDemoCandidateInput(person, index, activeTask);
+          return submitCandidateInput(input, {
+            accessToken,
+            idempotencyKey: matchOperationKey(`candidate:${input.externalCandidateId}:${input.sourceVersion}`),
+          });
+        }));
+      }
       const runEnvelope = await createMatchRun(activeTask, {
-        connectorIds: [DEMO_CANDIDATE_CONNECTOR_ID],
+        connectorIds: [useDemoSamples ? DEMO_CANDIDATE_CONNECTOR_ID : STANDALONE_RESUME_CONNECTOR_ID],
         filters: { keywords: [], locations: [], educationLevels: [] },
         dataCutoffAt: new Date().toISOString(),
         maximumCandidates: 200,
       }, {
         accessToken,
-        idempotencyKey: matchOperationKey(`match:${activeTask.servicePlan.id}:${activeTask.servicePlan.version}`),
+        idempotencyKey: globalThis.crypto?.randomUUID?.() || `match-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         minimumRecommendationScore: Number(matchStrategy.minScore || 70),
       });
       const run = runEnvelope.data || runEnvelope;
@@ -2936,13 +3105,14 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
       updateActiveTask({
         serviceMatchRun: run,
         serviceMatchResults: serviceCandidates,
-        candidateSourceMode: 'DEMO_INPUT_ADAPTER',
+        candidateSourceMode: useDemoSamples ? 'DEMO_INPUT_ADAPTER' : 'RESUME_LIBRARY',
         stage: serviceCandidates.length ? '名单确认' : '人才搜索',
         progress: serviceCandidates.length ? 48 : 30,
         tone: serviceCandidates.length ? 'blue' : 'amber',
       });
+      setResumeLibraryOpen(false);
       if (serviceCandidates.length) setSelectedCandidate(serviceCandidates[0].id);
-      pushEvent('G3 可解释匹配已完成', `服务端对 ${run.metrics?.scanned ?? fixtures.length} 份候选输入完成硬条件过滤与固定评分，输出 ${serviceCandidates.length} 份结果`, 'success');
+      pushEvent('G3 可解释匹配已完成', `服务端对 ${run.metrics?.scanned ?? fixtures.length} 份${useDemoSamples ? '演示候选输入' : '真实简历'}完成硬条件过滤与固定评分，输出 ${serviceCandidates.length} 份结果`, 'success');
       notify(serviceCandidates.length ? `G3 匹配完成，共 ${serviceCandidates.length} 份可解释结果` : 'G3 匹配完成，但当前范围没有候选结果');
     } catch (error) {
       setMatchError(error.message || '人才匹配运行失败');
@@ -2969,21 +3139,21 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
   return (
     <>
       <PageHeader eyebrow={`${activeTask.code} / 人才搜索`} title="人才匹配" description={serviceMatchNotStarted ? '岗位方案已批准，等待运行 G3 标准化候选输入、硬条件过滤、固定评分和证据解释' : activeTask.serviceMatchRun ? `G3 服务端匹配已完成 · ${activeTask.serviceMatchRun.pipelineVersion}` : `基于“${activeTask.role}”岗位方案的候选人排序`}
-        actions={serviceMatchNotStarted || serviceMatchEmpty
-          ? <button className="btn primary" disabled={matchPending} onClick={runServiceMatch}>{matchPending ? <RefreshCw size={17} /> : <Play size={17} />}{matchPending ? '正在执行 G3' : serviceMatchEmpty ? '重新运行 G3' : '运行 G3 匹配'}</button>
-          : <button className="btn primary" disabled={!candidatePool.length} onClick={confirmSelection}><Save size={17} />保存推荐名单草稿</button>} />
-      {(serviceMatchNotStarted || serviceMatchEmpty) && <section className="agent-boundary-notice"><ShieldCheck size={18} /><div><strong>{serviceMatchEmpty ? '上次运行没有检索到候选人' : 'G3 智能体服务已就绪'}</strong><p>{serviceMatchEmpty ? '可以重新导入虚构候选样本并执行匹配；服务会创建新的 MatchRun，保留上次运行记录。' : '本次将导入 12 位明确标记的虚构候选样本，真实执行候选规范化、硬条件过滤、固定评分、证据定位和结果审计；下一阶段将由独立简历库替换演示输入适配器。'}</p></div></section>}
+        actions={<><button className="btn secondary" onClick={() => setResumeLibraryOpen(true)}><UploadCloud size={17} />简历库{parsedResumeFiles.length ? ` ${parsedResumeFiles.length}` : ''}</button>{serviceMatchNotStarted || serviceMatchEmpty
+          ? <button className="btn primary" disabled={matchPending} onClick={() => parsedResumeFiles.length ? runServiceMatch(false) : setResumeLibraryOpen(true)}>{matchPending ? <RefreshCw className="spin" size={17} /> : parsedResumeFiles.length ? <Play size={17} /> : <Plus size={17} />}{matchPending ? '正在执行 G3' : parsedResumeFiles.length ? `匹配 ${parsedResumeFiles.length} 份简历` : '上传真实简历'}</button>
+          : <button className="btn primary" disabled={!candidatePool.length} onClick={confirmSelection}><Save size={17} />保存推荐名单草稿</button>}</>} />
+      {(serviceMatchNotStarted || serviceMatchEmpty) && <section className="agent-boundary-notice"><ShieldCheck size={18} /><div><strong>{serviceMatchEmpty ? '上次运行没有产生推荐结果' : 'G3 智能体服务已就绪'}</strong><p>{parsedResumeFiles.length ? `独立简历库已有 ${parsedResumeFiles.length} 份解析完成的简历，可直接按已批准评分卡运行匹配。` : '上传 PDF、Word 或 TXT 简历后，系统会保留原件与不可变版本，并将有证据的结构化结果送入 G3。'}</p></div></section>}
       {activeTask.serviceMatchRun && !serviceMatchEmpty && <section className="agent-boundary-notice success"><CheckCircle2 size={18} /><div><strong>当前候选排序来自 G3 服务端</strong><p>结果绑定岗位方案、评分卡和简历版本。名单确认与推荐报告尚未后端化，页面当前只保存名单草稿，不会执行任何外部动作。</p></div></section>}
       {matchError && <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>G3 匹配未完成</strong><small>{matchError}</small></span></div>}
       {serviceMatchNotStarted || serviceMatchEmpty ? <section className="panel workspace-gate talent-service-start">
-        <span className="workspace-gate-icon searching"><Search size={26} /></span>
-        <div><span className="section-kicker">真实服务端运行</span><h2>先执行候选匹配，再查看结果</h2><p>智能体不会凭空生成候选人。点击运行后，虚构样本会通过标准输入接口进入服务端，并按照已批准评分卡生成可复算结果。</p></div>
-        <div className="workspace-gate-meta"><span><ShieldCheck size={15} />固定规则决定总分</span><span><History size={15} />每项得分保留原文证据</span></div>
-        <button className="btn primary" disabled={matchPending} onClick={runServiceMatch}>{matchPending ? <RefreshCw size={17} /> : <Play size={17} />}{matchPending ? '规范化并评分中' : serviceMatchEmpty ? '重新导入并运行' : '导入样本并运行'}</button>
+        <span className="workspace-gate-icon searching">{parsedResumeFiles.length ? <UsersRound size={26} /> : <UploadCloud size={26} />}</span>
+        <div><span className="section-kicker">独立简历库</span><h2>{parsedResumeFiles.length ? `${parsedResumeFiles.length} 份简历可进入匹配` : '上传真实简历，建立候选人库'}</h2><p>{resumeLoading ? '正在读取服务端简历记录。' : resumeError ? resumeError : parsedResumeFiles.length ? '候选人与简历版本已经服务端固化，匹配结果将绑定岗位方案、评分卡与原文证据。' : '当前没有可匹配简历。演示样本仍可使用，但会被明确标记为演示输入。'}</p></div>
+        <div className="workspace-gate-meta"><span><ShieldCheck size={15} />原件和版本可追溯</span><span><History size={15} />缺失字段只标记待核实</span></div>
+        <div className="resume-gate-actions"><button className="btn primary" disabled={matchPending || resumeLoading} onClick={() => parsedResumeFiles.length ? runServiceMatch(false) : setResumeLibraryOpen(true)}>{matchPending ? <RefreshCw className="spin" size={17} /> : parsedResumeFiles.length ? <Play size={17} /> : <UploadCloud size={17} />}{matchPending ? '解析证据并评分中' : parsedResumeFiles.length ? `运行 G3 匹配` : '上传简历'}</button><button className="btn secondary" disabled={matchPending} onClick={() => runServiceMatch(true)}><Sparkles size={16} />使用 12 位演示样本</button></div>
       </section> : <>
       <section className="match-summary">
         <div><span>评分卡</span><strong>{activeTask.role}评分卡</strong><button title="查看评分规则" onClick={() => openDialog('scorecard')}><Eye size={15} /></button></div>
-        <div><span>候选输入</span><strong>{activeTask.serviceMatchRun ? '演示输入适配器' : '本地演示数据'}</strong></div>
+        <div><span>候选输入</span><strong>{activeTask.candidateSourceMode === 'RESUME_LIBRARY' ? '独立简历库' : activeTask.serviceMatchRun ? '演示输入适配器' : '本地演示数据'}</strong></div>
         <div><span>硬条件排除</span><strong>{activeTask.serviceMatchRun?.metrics?.hardFiltered ?? 167} 人</strong></div>
         <button className="text-button" onClick={() => activeTask.serviceMatchRun ? openDialog('scorecard') : openDialog('strategy')}><SlidersHorizontal size={16} />{activeTask.serviceMatchRun ? '查看执行规则' : '调整匹配策略'}</button>
       </section>
@@ -3007,14 +3177,47 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
         {selected && <CandidateDetail person={selected} task={activeTask} selected={selectedCandidates.includes(selected.id)} onToggle={() => toggleCandidate(selected.id)} openDialog={openDialog} notify={notify} knowledge={knowledge} />}
       </div>
       </>}
+      {resumeLibraryOpen && <ResumeLibraryDialog records={resumeFiles} queue={uploadQueue} loading={resumeLoading} error={resumeError} matchPending={matchPending} onClose={() => setResumeLibraryOpen(false)} onRefresh={refreshResumeLibrary} onUpload={uploadFiles} onRun={() => runServiceMatch(false)} onRunDemo={() => runServiceMatch(true)} />}
     </>
   );
+}
+
+function ResumeLibraryDialog({ records, queue, loading, error, matchPending, onClose, onRefresh, onUpload, onRun, onRunDemo }) {
+  const [authorizationConfirmed, setAuthorizationConfirmed] = useState(false);
+  const parsedCount = records.filter((item) => item.parseStatusCode === 'PARSED' && item.candidate).length;
+  const failedCount = records.filter((item) => item.parseStatusCode === 'PARSE_FAILED').length;
+  const uploadPending = queue.some((item) => item.status === '等待上传' || item.status === '上传并解析中');
+  return (
+    <DialogShell title="独立简历库" eyebrow="真实候选输入" onClose={onClose} wide actions={<><button className="btn secondary" disabled={matchPending || uploadPending} onClick={onRunDemo}><Sparkles size={16} />使用演示样本</button><button className="btn secondary" onClick={onClose}>关闭</button><button className="btn primary" disabled={!parsedCount || matchPending || uploadPending} onClick={onRun}>{matchPending ? <RefreshCw className="spin" size={16} /> : <Play size={16} />}{matchPending ? '正在匹配' : `匹配 ${parsedCount} 份简历`}</button></>}>
+      <div className="resume-library-summary"><span><strong>{records.length}</strong><small>文件记录</small></span><span><strong>{parsedCount}</strong><small>可进入 G3</small></span><span className={failedCount ? 'has-failures' : ''}><strong>{failedCount}</strong><small>解析失败</small></span><button className="icon-button" type="button" disabled={loading} title="刷新简历库" onClick={onRefresh}><RefreshCw className={loading ? 'spin' : ''} size={16} /></button></div>
+      <label className="resume-authorization-confirmation"><input type="checkbox" checked={authorizationConfirmed} onChange={(event) => setAuthorizationConfirmed(event.target.checked)} /><span><strong>已取得招聘处理授权</strong><small>我确认企业有权处理所选简历，并将其用于本岗位的智能匹配与人工复核。</small></span></label>
+      <label className={classNames('upload-zone resume-upload-zone', !authorizationConfirmed && 'disabled')} aria-disabled={!authorizationConfirmed}><UploadCloud size={25} /><strong>{authorizationConfirmed ? '选择 PDF、Word 或 TXT 简历' : '确认授权后选择简历'}</strong><small>单个文件不超过 20 MiB，可一次选择多份</small><input type="file" disabled={!authorizationConfirmed} multiple accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={(event) => { onUpload(event.target.files); event.target.value = ''; }} /></label>
+      {error && <div className="service-error-banner resume-library-error" role="alert"><AlertTriangle size={17} /><span><strong>简历服务未就绪</strong><small>{error}</small></span></div>}
+      {queue.length > 0 && <div className="resume-upload-queue">{queue.slice(0, 8).map((item) => <div key={item.id}><span className="file-icon"><FileText size={16} /></span><span><strong>{item.file.name}</strong><small>{item.error || item.status}</small></span><StatusPill tone={item.status === '解析完成' ? 'green' : item.status === '上传失败' || item.status === '解析失败' ? 'amber' : 'blue'}>{item.status}</StatusPill></div>)}</div>}
+      <div className="resume-library-list">
+        {loading && !records.length ? <div className="empty-state compact"><RefreshCw className="spin" size={20} /><strong>正在读取简历库</strong></div> : records.map((record) => {
+          const parsed = record.parseStatusCode === 'PARSED';
+          const displayName = record.candidate?.displayName || record.parsedProfile?.name || '姓名待核实';
+          return <div className="resume-library-row" key={record.id}><span className="file-icon"><FileText size={17} /></span><span className="resume-file-copy"><strong>{displayName}</strong><small>{record.fileName} · v{record.fileVersion} · {formatFileSize(record.sizeBytes)}</small></span><span className="resume-profile-brief">{parsed ? [record.parsedProfile?.educationLevel, record.parsedProfile?.experienceYears != null ? `${record.parsedProfile.experienceYears}年` : null, record.parsedProfile?.location].filter(Boolean).join(' · ') || '结构化字段待核实' : record.failureCode || '解析失败'}</span><StatusPill tone={parsed ? 'green' : 'amber'}>{record.parseStatus}</StatusPill></div>;
+        })}
+        {!loading && !records.length && <div className="empty-state compact"><FileText size={20} /><strong>简历库尚无文件</strong><span>上传后将在这里显示真实解析状态</span></div>}
+      </div>
+    </DialogShell>
+  );
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KiB`;
+  return `${value} B`;
 }
 
 function CandidateDetail({ person, task, selected, onToggle, openDialog, notify, knowledge }) {
   const preferredSourceId = task.role.includes('数据') ? 10 : 3;
   const portraitSource = knowledge.find((item) => item.id === preferredSourceId && !item.archived)
     || knowledge.find((item) => item.type === '人才画像' && !item.archived);
+  const sourceEvidenceCount = person.evidence.filter((item) => item.hasSourceEvidence ?? Boolean(item.quote)).length;
   return (
     <section className="candidate-detail">
       <div className="candidate-detail-head">
@@ -3025,18 +3228,19 @@ function CandidateDetail({ person, task, selected, onToggle, openDialog, notify,
         <span><BriefcaseBusiness size={16} /><small>工作经验</small><strong>{person.years}</strong></span>
         <span><GraduationCap size={16} /><small>最高学历</small><strong>{person.education}</strong></span>
         <span><Building2 size={16} /><small>毕业院校</small><strong>{person.school}</strong></span>
-        <span><MapPin size={16} /><small>意向地点</small><strong>北京</strong></span>
+        <span><MapPin size={16} /><small>意向地点</small><strong>{person.location || '待核验'}</strong></span>
       </div>
       <div className="detail-section">
-        <div className="detail-title"><h3>评分依据</h3><span><ShieldCheck size={14} />全部结论均有原文证据</span></div>
+        <div className="detail-title"><h3>评分依据</h3><span><ShieldCheck size={14} />{sourceEvidenceCount}/{person.evidence.length} 项有原文证据</span></div>
         <div className="evidence-list">
-          {person.evidence.map((item) => (
-            <div className="evidence-row" key={item.label}>
+          {person.evidence.map((item) => {
+            const hasSourceEvidence = item.hasSourceEvidence ?? Boolean(item.quote);
+            return <div className="evidence-row" key={item.label}>
               <div className="evidence-score"><span>{item.label}</span><strong>{item.value}<small>/{item.max}</small></strong></div>
               <div className="score-track"><i style={{ width: `${(item.value / item.max) * 100}%` }} /></div>
-              <blockquote>“{item.quote}” <button onClick={() => openDialog('resume', { person, highlight: item.label })}>查看简历原文</button></blockquote>
-            </div>
-          ))}
+              <blockquote className={hasSourceEvidence ? '' : 'system-assessment'}>{hasSourceEvidence ? <>“{item.quote}” {person.resumeFile && <button onClick={() => openDialog('resume', { person, highlight: item.label })}>查看简历原文</button>}</> : <><strong>系统判定</strong><span>{item.explanation || '该维度暂无可定位证据'}</span></>}</blockquote>
+            </div>;
+          })}
         </div>
       </div>
       <div className="fit-grid">

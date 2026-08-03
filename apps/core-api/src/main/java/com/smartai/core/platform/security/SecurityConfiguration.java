@@ -27,6 +27,7 @@ class SecurityConfiguration {
 				"/api/core/v1/requirement-drafts/**",
 				"/api/core/v1/recruitment-tasks/**",
 				"/api/core/v1/candidate-inputs/**",
+				"/api/core/v1/resume-files/**",
 				"/api/core/v1/match-runs/**",
 				"/api/core/v1/match-results/**",
 				"/api/core/v1/position-plan-versions/**",

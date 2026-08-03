@@ -2,6 +2,7 @@ package com.smartai.core.recruitment.agent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,6 +23,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -35,6 +38,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 class MatchingLifecycleApiTests {
 
 	private static final String MERGE_PATCH = "application/merge-patch+json";
+	private static final UUID STANDALONE_RESUME_CONNECTOR_ID =
+		UUID.fromString("00000000-0000-0000-0000-000000000301");
 
 	@Autowired
 	MockMvc mockMvc;
@@ -44,6 +49,51 @@ class MatchingLifecycleApiTests {
 
 	@Autowired
 	JdbcTemplate jdbcTemplate;
+
+	@Test
+	void uploadsAnAuthorizedStandaloneResumeAndMatchesItsExactVersion() throws Exception {
+		UUID tenantId = UUID.randomUUID();
+		jdbcTemplate.update(
+			"INSERT INTO tenant (tenant_id, tenant_key, display_name, status) VALUES (?, ?, ?, 'ACTIVE')",
+			tenantId, TenantActorResolver.tenantKey(tenantId), "Standalone resume matching tenant");
+		ApprovedPlan fixture = approvedPlan(tenantId);
+		byte[] content = (
+			"Name: Standalone Candidate\n"
+				+ "Location: Beijing\n"
+				+ "Education\nMaster\n"
+				+ "Skills\nData governance, Master data, Data quality\n"
+				+ "Experience\n7 years of professional experience leading master data governance and enterprise data standards delivery.\n")
+			.getBytes(StandardCharsets.UTF_8);
+		MvcResult uploaded = mockMvc.perform(multipart("/api/core/v1/resume-files")
+				.file(new MockMultipartFile("file", "standalone-candidate.txt", MediaType.TEXT_PLAIN_VALUE, content))
+				.header(TenantActorResolver.TENANT_HEADER, tenantId)
+				.header("Idempotency-Key", UUID.randomUUID()))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.parseStatus").value("PARSED"))
+			.andExpect(jsonPath("$.data.candidate.consentStatus").value("GRANTED"))
+			.andReturn();
+		JsonNode uploadedData = json(uploaded).path("data");
+		UUID resumeVersionId = UUID.fromString(uploadedData.at("/resumeVersionRef/id").asText());
+		long resumeVersion = uploadedData.at("/resumeVersionRef/version").asLong();
+
+		MvcResult run = mockMvc.perform(withTenant(post(
+				"/api/core/v1/recruitment-tasks/{taskId}/match-runs", fixture.taskId())
+				.header("Idempotency-Key", UUID.randomUUID())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(matchRunBody(fixture, STANDALONE_RESUME_CONNECTOR_ID)), tenantId))
+			.andExpect(status().isAccepted())
+			.andExpect(jsonPath("$.data.status").value("SUCCEEDED"))
+			.andExpect(jsonPath("$.data.metrics.scanned").value(1))
+			.andExpect(jsonPath("$.data.metrics.scored").value(1))
+			.andReturn();
+		UUID runId = UUID.fromString(json(run).at("/data/id").asText());
+
+		mockMvc.perform(withTenant(get("/api/core/v1/match-runs/{matchRunId}/results", runId), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.length()").value(1))
+			.andExpect(jsonPath("$.data[0].resumeVersionRef.id").value(resumeVersionId.toString()))
+			.andExpect(jsonPath("$.data[0].resumeVersionRef.version").value(resumeVersion));
+	}
 
 	@Test
 	void normalizesCandidatesAndProducesExplainableDeterministicResults() throws Exception {
@@ -210,38 +260,42 @@ class MatchingLifecycleApiTests {
 	}
 
 	private ApprovedPlan approvedPlan() throws Exception {
-		TaskFixture task = createTask();
-		mockMvc.perform(post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", task.taskId())
+		return approvedPlan(null);
+	}
+
+	private ApprovedPlan approvedPlan(UUID tenantId) throws Exception {
+		TaskFixture task = createTask(tenantId);
+		mockMvc.perform(inTenant(post("/api/core/v1/recruitment-tasks/{taskId}/position-plan/generations", task.taskId())
 			.header("Idempotency-Key", UUID.randomUUID())
 			.contentType(MediaType.APPLICATION_JSON)
-			.content(generationBody(task)))
+			.content(generationBody(task)), tenantId))
 			.andExpect(status().isAccepted());
-		JsonNode plan = json(mockMvc.perform(get(
-			"/api/core/v1/recruitment-tasks/{taskId}/position-plan", task.taskId()))
+		JsonNode plan = json(mockMvc.perform(inTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}/position-plan", task.taskId()), tenantId))
 			.andExpect(status().isOk()).andReturn()).path("data");
 		UUID planId = UUID.fromString(plan.path("id").asText());
 		String inputHash = plan.path("contentHash").asText();
-		MvcResult checkpointResponse = mockMvc.perform(post(
+		MvcResult checkpointResponse = mockMvc.perform(inTenant(post(
 			"/api/core/v1/position-plan-versions/{planVersionId}/review-requests", planId)
 			.header("If-Match", "\"1\"")
 			.header("Idempotency-Key", UUID.randomUUID())
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(objectMapper.writeValueAsString(Map.of(
 				"requiredRole", "RECRUITMENT_MANAGER",
-				"inputHash", inputHash))))
+				"inputHash", inputHash))), tenantId))
 			.andExpect(status().isCreated())
 			.andReturn();
 		UUID checkpointId = UUID.fromString(json(checkpointResponse).at("/data/id").asText());
-		mockMvc.perform(post("/api/core/v1/human-checkpoints/{checkpointId}/decisions", checkpointId)
+		mockMvc.perform(inTenant(post("/api/core/v1/human-checkpoints/{checkpointId}/decisions", checkpointId)
 			.header("If-Match", "\"1\"")
 			.header("Idempotency-Key", UUID.randomUUID())
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(objectMapper.writeValueAsString(Map.of(
 				"decision", "APPROVE",
-				"inputHash", inputHash))))
+				"inputHash", inputHash))), tenantId))
 			.andExpect(status().isOk());
-		JsonNode approved = json(mockMvc.perform(get(
-			"/api/core/v1/position-plan-versions/{planVersionId}", planId))
+		JsonNode approved = json(mockMvc.perform(inTenant(get(
+			"/api/core/v1/position-plan-versions/{planVersionId}", planId), tenantId))
 			.andExpect(status().isOk()).andReturn()).path("data");
 		return new ApprovedPlan(
 			task.taskId(), planId, approved.path("version").asLong(),
@@ -250,11 +304,15 @@ class MatchingLifecycleApiTests {
 	}
 
 	private TaskFixture createTask() throws Exception {
-		MvcResult created = mockMvc.perform(post("/api/core/v1/requirement-drafts")
+		return createTask(null);
+	}
+
+	private TaskFixture createTask(UUID tenantId) throws Exception {
+		MvcResult created = mockMvc.perform(inTenant(post("/api/core/v1/requirement-drafts")
 			.header("Idempotency-Key", UUID.randomUUID())
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(objectMapper.writeValueAsString(Map.of(
-				"input", "Create a recruitment task for a Data Governance Specialist in Beijing."))))
+				"input", "Create a recruitment task for a Data Governance Specialist in Beijing."))), tenantId))
 			.andExpect(status().isCreated()).andReturn();
 		UUID draftId = UUID.fromString(json(created).at("/data/id").asText());
 
@@ -265,23 +323,24 @@ class MatchingLifecycleApiTests {
 		fields.put("headcount", confirmedField(2));
 		fields.put("coreRequirements", confirmedField(List.of(
 			"Enterprise data governance experience", "Master data and data standards delivery")));
-		MvcResult patched = mockMvc.perform(patch("/api/core/v1/requirement-drafts/{draftId}", draftId)
+		MvcResult patched = mockMvc.perform(inTenant(patch("/api/core/v1/requirement-drafts/{draftId}", draftId)
 			.header("If-Match", "\"1\"")
 			.header("Idempotency-Key", UUID.randomUUID())
 			.contentType(MERGE_PATCH)
-			.content(objectMapper.writeValueAsString(Map.of("fields", fields))))
+			.content(objectMapper.writeValueAsString(Map.of("fields", fields))), tenantId))
 			.andExpect(status().isOk()).andReturn();
 		String inputHash = patched.getResponse().getHeader("X-SmartAI-Input-Hash");
-		MvcResult converted = mockMvc.perform(post("/api/core/v1/requirement-drafts/{draftId}/convert", draftId)
+		MvcResult converted = mockMvc.perform(inTenant(post("/api/core/v1/requirement-drafts/{draftId}/convert", draftId)
 			.header("If-Match", "\"2\"")
 			.header("Idempotency-Key", UUID.randomUUID())
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(objectMapper.writeValueAsString(Map.of(
 				"confirmation", Map.of("confirmed", true, "inputHash", inputHash),
 				"ownerUserId", TenantActorResolver.DEMO_USER_ID,
-				"participantUserIds", List.of()))))
+				"participantUserIds", List.of()))), tenantId))
 			.andExpect(status().isCreated()).andReturn();
-		long draftVersion = json(mockMvc.perform(get("/api/core/v1/requirement-drafts/{draftId}", draftId))
+		long draftVersion = json(mockMvc.perform(inTenant(
+			get("/api/core/v1/requirement-drafts/{draftId}", draftId), tenantId))
 			.andExpect(status().isOk()).andReturn()).at("/data/version").asLong();
 		return new TaskFixture(
 			draftId, draftVersion, UUID.fromString(json(converted).at("/data/id").asText()));
@@ -355,6 +414,12 @@ class MatchingLifecycleApiTests {
 			MockHttpServletRequestBuilder request,
 			UUID tenantId) {
 		return request.header(TenantActorResolver.TENANT_HEADER, tenantId);
+	}
+
+	private static MockHttpServletRequestBuilder inTenant(
+			MockHttpServletRequestBuilder request,
+			UUID tenantId) {
+		return tenantId == null ? request : withTenant(request, tenantId);
 	}
 
 	private record TaskFixture(UUID draftId, long draftVersion, UUID taskId) {

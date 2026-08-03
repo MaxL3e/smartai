@@ -40,6 +40,9 @@ class DatabaseMigrationTests {
 		"knowledge_chunk",
 		"knowledge_upload_session",
 		"knowledge_command",
+		"resume_document",
+		"resume_file_version",
+		"resume_file_command",
 		"audit_event",
 		"outbox_event");
 

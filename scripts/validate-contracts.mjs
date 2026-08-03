@@ -77,6 +77,8 @@ function validateOpenApi(document) {
     404: 'NotFound',
     409: 'VersionConflict',
     410: 'Gone',
+    413: 'PayloadTooLarge',
+    415: 'UnsupportedMediaType',
     428: 'PreconditionRequired',
     429: 'RateLimited',
     500: 'InternalServerError',
@@ -92,6 +94,9 @@ function validateOpenApi(document) {
     convertRequirementDraft: [400, 401, 403, 404, 409, 410, 428, 429, 500, 503, 504],
     listRecruitmentTasks: [400, 401, 403, 429, 500, 503, 504],
     getRecruitmentTask: [400, 401, 403, 404, 429, 500, 503, 504],
+    createResumeFile: [400, 401, 403, 409, 413, 415, 429, 500, 503, 504],
+    listResumeFiles: [400, 401, 403, 429, 500, 503, 504],
+    getResumeFile: [400, 401, 403, 404, 429, 500, 503, 504],
   };
   for (const [operationId, statuses] of Object.entries(firstImplementationErrors)) {
     const operation = operations.get(operationId);
@@ -109,6 +114,26 @@ function validateOpenApi(document) {
   requireSuccessHeader('exchangeEmbedToken', '200', 'ETag');
   requireSuccessHeader('resolveEmbedContext', '200', 'ETag');
   requireSuccessHeader('createRequirementDraft', '201', 'Idempotency-Replayed');
+  requireSuccessHeader('createResumeFile', '201', 'ETag');
+  requireSuccessHeader('createResumeFile', '201', 'Idempotency-Replayed');
+
+  const resumeUpload = document.components.schemas.ResumeFileUploadRequest;
+  invariant(resumeUpload?.required?.includes('file'), 'ResumeFileUploadRequest.file must be required');
+  const allowedResumeMimeTypes = resumeUpload?.properties?.file?.['x-smartai-allowed-mime-types'];
+  invariant(Array.isArray(allowedResumeMimeTypes) && allowedResumeMimeTypes.length === 4, 'Resume file upload must declare exactly four supported MIME types');
+  for (const mimeType of ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain']) {
+    invariant(allowedResumeMimeTypes.includes(mimeType), `Resume file upload is missing MIME type: ${mimeType}`);
+  }
+  invariant(resumeUpload?.properties?.sourceSystem?.pattern, 'ResumeFileUploadRequest.sourceSystem must be declared');
+  invariant(resumeUpload?.properties?.externalCandidateId?.maxLength === 256, 'ResumeFileUploadRequest.externalCandidateId must be declared');
+  const resumeFileRequired = new Set(document.components.schemas.ResumeFile?.required || []);
+  for (const field of ['originalFileName', 'sha256', 'fileVersion', 'parseStatus', 'failureCode', 'parserVersion', 'retryable', 'evidence', 'parsedProfile', 'candidate', 'resumeVersionRef', 'candidateReceipt', 'sourceSystem', 'externalCandidateId']) {
+    invariant(resumeFileRequired.has(field), `ResumeFile must require ${field}`);
+  }
+  invariant(!resumeFileRequired.has('extractedText'), 'ResumeFile.extractedText must be optional for list responses');
+  invariant(document.components.schemas.ResumeFile?.properties?.evidence?.items?.$ref === '#/components/schemas/ResumeEvidence', 'ResumeFile.evidence must use ResumeEvidence');
+  invariant(document.components.schemas.ResumeFile?.properties?.parsedProfile?.$ref === '#/components/schemas/ParsedResumeProfile', 'ResumeFile.parsedProfile must use ParsedResumeProfile');
+  invariant(document.components.schemas.ResumeParseStatus?.enum?.join(',') === 'PARSED,PARSE_FAILED', 'ResumeParseStatus must describe synchronous terminal states');
 
   const hostOrigin = document.components.schemas.EmbedSessionCreateRequest?.properties?.hostOrigin;
   invariant(hostOrigin?.$ref === '#/components/schemas/HttpsOrigin', 'EmbedSessionCreateRequest.hostOrigin must reuse HttpsOrigin');

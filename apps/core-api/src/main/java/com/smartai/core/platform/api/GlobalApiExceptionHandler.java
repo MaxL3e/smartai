@@ -6,12 +6,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.smartai.core.platform.web.RequestContext;
@@ -64,6 +67,42 @@ final class GlobalApiExceptionHandler {
 			"VALIDATION_FAILED",
 			"Request parameter has an invalid type",
 			List.of(new ApiErrorDetail("INVALID", exception.getName(), "Value has an invalid format")));
+	}
+
+	@ExceptionHandler(MissingServletRequestPartException.class)
+	ResponseEntity<ApiProblem> handleMissingPart(
+			MissingServletRequestPartException exception,
+			HttpServletRequest request) {
+		return problem(
+			request,
+			HttpStatus.BAD_REQUEST,
+			"VALIDATION_FAILED",
+			"Required multipart field is missing",
+			List.of(new ApiErrorDetail("REQUIRED", exception.getRequestPartName(), "Multipart field is required")));
+	}
+
+	@ExceptionHandler(MaxUploadSizeExceededException.class)
+	ResponseEntity<ApiProblem> handleUploadTooLarge(
+			MaxUploadSizeExceededException exception,
+			HttpServletRequest request) {
+		return problem(
+			request,
+			HttpStatus.PAYLOAD_TOO_LARGE,
+			"RESUME_FILE_TOO_LARGE",
+			"Uploaded file exceeds the configured size limit",
+			List.of());
+	}
+
+	@ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+	ResponseEntity<ApiProblem> handleUnsupportedMediaType(
+			HttpMediaTypeNotSupportedException exception,
+			HttpServletRequest request) {
+		return problem(
+			request,
+			HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+			"UNSUPPORTED_MEDIA_TYPE",
+			"Request media type is not supported",
+			List.of());
 	}
 
 	@ExceptionHandler(NoResourceFoundException.class)
