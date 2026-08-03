@@ -633,6 +633,43 @@ function PageHeader({ eyebrow, title, description, actions }) {
   );
 }
 
+function AgentRuntimeBar({ runtime, onOpenAudit, onOpenEmbed }) {
+  const connected = runtime.status === 'online';
+  const checking = runtime.status === 'checking';
+  const serviceStatus = checking ? '检查中' : connected ? '服务可用' : '未连接';
+  const capabilities = [
+    { code: 'G1', label: '需求理解', status: serviceStatus, state: connected ? 'live' : checking ? 'checking' : 'offline' },
+    { code: 'G2', label: '岗位方案', status: connected ? '规则生成' : serviceStatus, state: connected ? 'live' : checking ? 'checking' : 'offline' },
+    { code: 'G3', label: '人才匹配', status: connected ? '固定评分' : serviceStatus, state: connected ? 'live' : checking ? 'checking' : 'offline' },
+    { code: 'G4', label: '面试协同', status: '本地演示', state: 'planned' },
+    { code: 'G5', label: '综合评价', status: '本地演示', state: 'planned' },
+  ];
+  return (
+    <section className={classNames('agent-runtime-bar', runtime.status)} aria-label="招聘智能体能力与运行状态">
+      <div className="agent-runtime-brand">
+        <span className="agent-runtime-mark"><Bot size={18} /></span>
+        <span><strong>招聘智能体核心</strong><small>{runtime.detail}</small></span>
+      </div>
+      <div className="agent-capability-track">
+        {capabilities.map((item) => (
+          <div className={classNames('agent-capability-step', 'state-' + item.state)} key={item.code}>
+            <span className="agent-capability-code">{item.code}</span>
+            <span><strong>{item.label}</strong><small>{item.status}</small></span>
+          </div>
+        ))}
+      </div>
+      <div className="agent-runtime-tools">
+        <button type="button" className="agent-embed-entry" onClick={onOpenEmbed}>
+          <ExternalLink size={15} />
+          <span><strong>ATS 嵌入协议</strong><small>SDK / API 基线</small></span>
+          <ChevronRight size={14} />
+        </button>
+        <button type="button" className="icon-button small" title="查看运行审计" onClick={onOpenAudit}><Activity size={16} /></button>
+      </div>
+    </section>
+  );
+}
+
 function AppView({ view, context }) {
   return (
     <>
@@ -719,6 +756,31 @@ function EmbedGate({ status, onOpenStandalone }) {
 
 function App() {
   const embedConfig = useMemo(() => readEmbedConfiguration(), []);
+  const [agentRuntime, setAgentRuntime] = useState({ status: 'checking', detail: '正在检查 Core API' });
+  useEffect(() => {
+    if (embedConfig.isEmbedded) return undefined;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2500);
+    fetch('/actuator/health', { signal: controller.signal, headers: { Accept: 'application/json' } })
+      .then((response) => {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then((health) => {
+        setAgentRuntime(health?.status === 'UP'
+          ? { status: 'online', detail: 'Core API 已连接 · 确定性规则链路' }
+          : { status: 'offline', detail: 'Core API 状态异常' });
+      })
+      .catch(() => setAgentRuntime({
+        status: 'offline',
+        detail: window.location.hostname === 'maxl3e.github.io' ? '演示站 · 后端尚未部署' : 'Core API 未连接',
+      }))
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [embedConfig.isEmbedded]);
   const loadAppState = (key, fallback) => embedConfig.isEmbedded ? fallback : loadStored(key, fallback);
   const [view, setView] = useState(embedConfig.initialView);
   const [selectedCandidate, setSelectedCandidate] = useState(() => loadAppState('smartai.selectedCandidate', 1));
@@ -1591,6 +1653,7 @@ function App() {
     getAccessToken: () => embedAccessTokenRef.current,
     setModalOpen,
     setTaskModalOpen,
+    agentRuntime,
     openDialog,
   };
 
@@ -1599,6 +1662,7 @@ function App() {
       {!embedConfig.isEmbedded && <Sidebar view={view} setView={requestView} taskCount={tasks.filter((task) => !task.archived).length} interviewCount={selectedCandidates.length} onProfile={() => setProfileOpen((value) => !value)} profileOpen={profileOpen} />}
       <div className="app-column">
         {!embedConfig.isEmbedded && <Topbar setView={requestView} notifications={notifications} notificationOpen={notificationOpen} setNotificationOpen={setNotificationOpen} setNotifications={setNotifications} onSearch={() => setGlobalSearchOpen(true)} openDialog={openDialog} />}
+        {!embedConfig.isEmbedded && <AgentRuntimeBar runtime={agentRuntime} onOpenAudit={() => requestView('audit')} onOpenEmbed={() => openDialog('embed-info')} />}
         {embedConfig.isEmbedded && <HostContextBar context={hostContext} activeTask={activeTask} candidate={candidate} status={embedStatus} surface={embedConfig.surface} onOpenWorkspace={() => requestHostNavigation('open_workspace')} onReturnToHost={() => window.parent === window ? openStandalone() : requestHostNavigation('return_to_context')} />}
         <main className={classNames('main-content', `view-${view}`, embedConfig.surface === 'sidebar' && 'embed-sidebar-main')}>
           {embedConfig.isEmbedded && !hostContext
@@ -1715,7 +1779,7 @@ function Topbar({ setView, notifications, notificationOpen, setNotificationOpen,
   );
 }
 
-function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCandidate, setView, advanceFlow, events, activeTask, updateActiveTask, notify, pushEvent }) {
+function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCandidate, setView, advanceFlow, events, activeTask, updateActiveTask, notify, pushEvent, agentRuntime }) {
   const serviceTask = activeTask.creationMode === 'service';
   const matchingServicePending = serviceTask && !activeTask.serviceMatchRun;
   const serviceMatchEmpty = serviceTask && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
@@ -1856,10 +1920,10 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
           </div>
           <div className="agent-identity">
             <span className="agent-orbit"><Bot size={25} /></span>
-            <div><strong>招聘执行智能体</strong><small><i />{serviceNeedsMatch ? '就绪 · 受控执行 · 等待匹配服务' : '在线 · 受控执行 · 实时同步'}</small></div>
+            <div><strong>招聘执行智能体</strong><small><i />{agentRuntime?.status === 'online' ? (serviceNeedsMatch ? 'Core API 已连接 · 等待 G3' : 'Core API 已连接 · 受控执行') : 'Core API 未连接 · 本地演示'}</small></div>
           </div>
           <div className="activity-now" aria-live="polite">
-            <div className="activity-now-head"><span><i />{serviceNeedsMatch ? '当前状态' : '实时处理'}</span><em>{serviceNeedsMatch ? 'WAIT' : 'LIVE'}</em></div>
+            <div className="activity-now-head"><span><i />当前任务状态</span><em>{agentRuntime?.status === 'online' ? 'SERVICE' : 'DEMO'}</em></div>
             <strong>{stageMessage}</strong>
             <p key={currentActivity?.id || activeTask.stage}>{currentActivity ? `最近节点：${currentActivity.title}` : '等待当前任务产生新的执行记录'}</p>
             {!serviceNeedsMatch && <div className="activity-signal" aria-hidden="true">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <i key={item} />)}</div>}
@@ -2306,6 +2370,19 @@ export function TaskModal({ onClose, onSubmit, getAccessToken, sourceJobRef = nu
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
         </div>
+        <div className="agent-route-strip" aria-label="智能体执行链路">
+          {[
+            ['G1', '理解招聘需求', draft ? '已整理' : pending ? '处理中' : '当前步骤'],
+            ['G2', '生成岗位方案', draft ? '待人工确认' : '下一步骤'],
+            ['G3', '候选规则匹配', '方案批准后执行'],
+          ].map(([code, label, status], index) => (
+            <div className={classNames('agent-route-step', index === 0 && 'active', draft && index === 0 && 'complete')} key={code}>
+              <span>{draft && index === 0 ? <Check size={13} /> : code}</span>
+              <span><strong>{label}</strong><small>{status}</small></span>
+            </div>
+          ))}
+          <div className="agent-route-boundary"><ShieldCheck size={15} /><span><strong>受控执行</strong><small>关键节点人工确认</small></span></div>
+        </div>
         <div className="task-chat-body">
           <div className="chat-thread" aria-live="polite">
             {messages.map((message) => <div className={classNames('chat-message', message.role)} key={message.id}>{message.role === 'assistant' && <span className="chat-avatar"><Bot size={17} /></span>}<p>{message.text}</p></div>)}
@@ -2367,6 +2444,7 @@ function GlobalSearch({ tasks, candidates, knowledge, onClose, onNavigate }) {
 function DetailDialog({ dialog, onClose, context }) {
   const { activeTask, updateActiveTask, updateTask, archiveTask, restoreTask, updateKnowledge, removeKnowledge, restoreKnowledge, notify, pushEvent, matchStrategy, setMatchStrategy, setInterviewStatuses, toggleCandidate } = context;
   if (dialog.type === 'help') return <DialogShell title="演示帮助中心" eyebrow="产品帮助" onClose={onClose}><div className="help-grid"><div><span>01</span><strong>创建招聘任务</strong><p>录入需求后，智能体会生成岗位方案、评分卡和知识引用。</p></div><div><span>02</span><strong>确认人才名单</strong><p>查看候选人匹配证据，调整策略并选择进入面试的人选。</p></div><div><span>03</span><strong>模拟面试闭环</strong><p>发送提醒、回收结果、查看转写和综合评价。</p></div><div><span>04</span><strong>维护企业知识</strong><p>新增、复核和归档岗位知识、人才画像与制度流程。</p></div></div><div className="dialog-note"><ShieldCheck size={17} />演示数据均为虚构数据，所有修改仅保存在当前浏览器。</div></DialogShell>;
+  if (dialog.type === 'embed-info') return <DialogShell title="ATS 嵌入协议基线" eyebrow="集成边界" onClose={onClose}><div className="rule-dialog-list">{[['宿主输入','租户、岗位、候选人和当前用户上下文'],['智能体输入','招聘需求、岗位方案版本、候选简历版本'],['智能体输出','任务、岗位方案、匹配结果与人工确认点'],['集成方式','Embed SDK、Core API 与事件回调契约']].map(([title, text]) => <div key={title}><span><ExternalLink size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div><div className="dialog-note"><AlertTriangle size={17} />当前完成的是协议与宿主演示基线；客户 ATS 认证、生产连接器及 G4/G5 服务仍需按项目接入。</div></DialogShell>;
   if (dialog.type === 'enterprise') return <DialogShell title="企业空间" eyebrow="当前租户" onClose={onClose}><div className="enterprise-dialog"><span className="enterprise-logo"><Building2 size={23} /></span><div><strong>华岳能源集团</strong><p>集团招聘智能体演示环境</p></div></div><div className="detail-list"><div><span>组织范围</span><strong>集团总部及 12 家下属企业</strong></div><div><span>数据环境</span><strong>演示数据 · 本地存储</strong></div><div><span>知识权限</span><strong>组织人事部 / 招聘中心</strong></div></div><div className="dialog-note"><LockKeyhole size={17} />正式接入客户系统后，企业空间将隔离任务、人才与知识数据。</div></DialogShell>;
   if (dialog.type === 'rules') return <DialogShell title="智能体执行边界" eyebrow="安全与治理" onClose={onClose}><div className="rule-dialog-list">{[['允许自动执行','人才检索、评分计算、邀约提醒、结果回收、报告草拟'],['必须人工确认','岗位发布、候选名单、淘汰决定、录用决定、Offer审批'],['禁止使用','年龄、性别、婚育、籍贯等与岗位胜任无关的敏感属性'],['全程留痕','知识引用、评分证据、人工修改和对外操作均记录审计日志']].map(([title, text], index) => <div key={title}><span>{index < 2 ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}</span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
   if (dialog.type === 'governance') return <DialogShell title="知识治理规则" eyebrow="知识库管理" onClose={onClose}><div className="rule-dialog-list">{[['上传检查','识别候选人隐私、敏感属性、重复资料和文件有效期'],['解析复核','新资料默认进入待复核状态，确认后才参与智能体检索'],['版本管理','保留资料版本、维护部门、更新时间和引用记录'],['画像约束','只使用能力与行为证据，不使用受保护或非岗位相关属性']].map(([title, text]) => <div key={title}><span><ShieldCheck size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></div>)}</div></DialogShell>;
