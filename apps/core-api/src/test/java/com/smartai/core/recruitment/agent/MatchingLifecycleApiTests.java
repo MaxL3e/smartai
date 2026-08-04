@@ -15,7 +15,14 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -259,6 +266,447 @@ class MatchingLifecycleApiTests {
 			.andExpect(jsonPath("$.error.code").value("TASK_STAGE_CONFLICT"));
 	}
 
+	@Test
+	void confirmsAnImmutableCandidateListAndPublishesAVersionedRecommendationReport() throws Exception {
+		UUID tenantId = UUID.randomUUID();
+		jdbcTemplate.update(
+			"INSERT INTO tenant (tenant_id, tenant_key, display_name, status) VALUES (?, ?, ?, 'ACTIVE')",
+			tenantId, TenantActorResolver.tenantKey(tenantId), "Candidate-list lifecycle tenant");
+		ApprovedPlan fixture = approvedPlan(tenantId);
+		UUID connectorId = UUID.randomUUID();
+		mockMvc.perform(withTenant(post("/api/core/v1/candidate-inputs")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(candidateBody(
+				connectorId, "candidate-g4", "resume-v1", "Beijing", "7.0", "GRANTED")), tenantId))
+			.andExpect(status().isCreated());
+
+		MvcResult runResponse = mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/match-runs", fixture.taskId())
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(matchRunBody(fixture, connectorId)), tenantId))
+			.andExpect(status().isAccepted())
+			.andExpect(jsonPath("$.data.status").value("SUCCEEDED"))
+			.andReturn();
+		JsonNode run = json(runResponse).path("data");
+		UUID runId = UUID.fromString(run.path("id").asText());
+		long runVersion = run.path("version").asLong();
+		JsonNode matchResultTaskCandidateRef = json(mockMvc.perform(withTenant(get(
+			"/api/core/v1/match-runs/{matchRunId}/results", runId), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.length()").value(1))
+			.andReturn()).at("/data/0/taskCandidateRef");
+		JsonNode taskCandidate = json(mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}/task-candidates", fixture.taskId()), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.length()").value(1))
+			.andReturn()).at("/data/0");
+		UUID taskCandidateId = UUID.fromString(taskCandidate.path("id").asText());
+		long taskCandidateVersion = taskCandidate.path("version").asLong();
+		assertThat(matchResultTaskCandidateRef.path("id").asText()).isEqualTo(taskCandidateId.toString());
+		assertThat(matchResultTaskCandidateRef.path("version").asLong()).isEqualTo(taskCandidateVersion);
+		long taskVersion = taskVersion(fixture.taskId(), tenantId);
+
+		Map<String, Object> invitationPlan = Map.of(
+			"connectorId", UUID.randomUUID(),
+			"templateId", "online-interview-reserved",
+			"deadline", OffsetDateTime.now().plusDays(2),
+			"channel", "EMAIL",
+			"messageTemplateId", "candidate-invitation-v1",
+			"externalImpactSummary", "仅生成邀请方案，不创建面试或调用外部系统");
+		String previewBody = objectMapper.writeValueAsString(Map.of(
+			"matchRunRef", resourceRef("MatchRun", runId, runVersion),
+			"taskCandidateRefs", List.of(resourceRef(
+				"TaskCandidate", UUID.fromString(matchResultTaskCandidateRef.path("id").asText()),
+				matchResultTaskCandidateRef.path("version").asLong())),
+			"selectionNotes", Map.of(taskCandidateId, "优先核实大型项目职责范围"),
+			"invitationPlan", invitationPlan));
+		UUID previewKey = UUID.randomUUID();
+		MvcResult firstPreviewResponse = mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-previews", fixture.taskId())
+			.header("Idempotency-Key", previewKey)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(previewBody), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Idempotency-Replayed", "false"))
+			.andExpect(jsonPath("$.data.version").value(1))
+			.andExpect(jsonPath("$.data.items.length()").value(1))
+			.andExpect(jsonPath("$.data.items[0].selectionReason").isNotEmpty())
+			.andExpect(jsonPath("$.data.items[0].note").value("优先核实大型项目职责范围"))
+			.andReturn();
+		JsonNode firstPreview = json(firstPreviewResponse).path("data");
+		UUID previewId = UUID.fromString(firstPreview.path("id").asText());
+		String inputHash = firstPreview.path("inputHash").asText();
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/candidate-list-previews/{previewId}", previewId), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(header().string("ETag", "\"1\""))
+			.andExpect(header().string("X-SmartAI-Input-Hash", inputHash))
+			.andExpect(jsonPath("$.data.id").value(previewId.toString()))
+			.andExpect(jsonPath("$.data.items[0].note").value("优先核实大型项目职责范围"));
+
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-previews", fixture.taskId())
+			.header("Idempotency-Key", previewKey)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(previewBody), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Idempotency-Replayed", "true"))
+			.andExpect(jsonPath("$.data.id").value(previewId.toString()));
+		MvcResult secondPreviewResponse = mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-previews", fixture.taskId())
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(previewBody), tenantId))
+			.andExpect(status().isOk())
+			.andReturn();
+		JsonNode secondPreview = json(secondPreviewResponse).path("data");
+		assertThat(secondPreview.path("id").asText()).isNotEqualTo(previewId.toString());
+		assertThat(secondPreview.path("inputHash").asText()).isEqualTo(inputHash);
+		UUID secondPreviewId = UUID.fromString(secondPreview.path("id").asText());
+
+		UUID concurrentPreviewKey = UUID.randomUUID();
+		CountDownLatch requestsReady = new CountDownLatch(2);
+		CountDownLatch startRequests = new CountDownLatch(1);
+		Callable<MvcResult> createConcurrentPreview = () -> {
+			requestsReady.countDown();
+			startRequests.await(5, TimeUnit.SECONDS);
+			return mockMvc.perform(withTenant(post(
+				"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-previews", fixture.taskId())
+				.header("Idempotency-Key", concurrentPreviewKey)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(previewBody), tenantId)).andReturn();
+		};
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		MvcResult concurrentFirst;
+		MvcResult concurrentSecond;
+		try {
+			Future<MvcResult> firstFuture = executor.submit(createConcurrentPreview);
+			Future<MvcResult> secondFuture = executor.submit(createConcurrentPreview);
+			assertThat(requestsReady.await(5, TimeUnit.SECONDS)).isTrue();
+			startRequests.countDown();
+			concurrentFirst = firstFuture.get(30, TimeUnit.SECONDS);
+			concurrentSecond = secondFuture.get(30, TimeUnit.SECONDS);
+		}
+		finally {
+			executor.shutdownNow();
+		}
+		assertThat(List.of(
+			concurrentFirst.getResponse().getStatus(), concurrentSecond.getResponse().getStatus()))
+			.containsOnly(200);
+		assertThat(Set.of(
+			concurrentFirst.getResponse().getHeader("Idempotency-Replayed"),
+			concurrentSecond.getResponse().getHeader("Idempotency-Replayed")))
+			.containsExactlyInAnyOrder("false", "true");
+		assertThat(json(concurrentFirst).at("/data/id").asText())
+			.isEqualTo(json(concurrentSecond).at("/data/id").asText());
+
+		Map<String, Object> previewRef = resourceRef("CandidateListPreview", previewId, 1L);
+		String staleReviewBody = objectMapper.writeValueAsString(Map.of(
+			"previewRef", previewRef,
+			"inputHash", inputHash,
+			"requiredRole", "RECRUITMENT_MANAGER"));
+		mockMvc.perform(withTenant(post("/api/core/v1/candidate-inputs")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(candidateBody(
+				connectorId, "candidate-g4", "resume-v2", "Beijing", "7.0", "REVOKED")), tenantId))
+			.andExpect(status().isCreated());
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + taskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(staleReviewBody), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("CANDIDATE_CONSENT_NOT_GRANTED"));
+		mockMvc.perform(withTenant(post("/api/core/v1/candidate-inputs")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(candidateBody(
+				connectorId, "candidate-g4", "resume-v3", "Beijing", "7.0", "GRANTED")), tenantId))
+			.andExpect(status().isCreated());
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + (taskVersion + 100) + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(staleReviewBody), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + taskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(objectMapper.writeValueAsString(Map.of(
+				"previewRef", previewRef,
+				"inputHash", "0".repeat(64),
+				"requiredRole", "RECRUITMENT_MANAGER"))), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("CONFIRMATION_INPUT_CHANGED"));
+
+		String expiringReviewBody = objectMapper.writeValueAsString(Map.of(
+			"previewRef", resourceRef("CandidateListPreview", secondPreviewId, 1L),
+			"inputHash", inputHash,
+			"requiredRole", "RECRUITMENT_MANAGER"));
+		MvcResult expiringReviewResponse = mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + taskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(expiringReviewBody), tenantId))
+			.andExpect(status().isCreated())
+			.andReturn();
+		UUID expiringCheckpointId = UUID.fromString(json(expiringReviewResponse).at("/data/id").asText());
+		jdbcTemplate.update(
+			"UPDATE human_checkpoint SET expires_at = ? WHERE tenant_id = ? AND human_checkpoint_id = ?",
+			OffsetDateTime.now().minusMinutes(1), tenantId, expiringCheckpointId);
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/human-checkpoints/{checkpointId}/decisions", expiringCheckpointId)
+			.header("If-Match", "\"1\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(objectMapper.writeValueAsString(Map.of(
+				"decision", "CANCEL",
+				"inputHash", inputHash))), tenantId))
+			.andExpect(status().isGone())
+			.andExpect(jsonPath("$.error.code").value("CHECKPOINT_EXPIRED"));
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/human-checkpoints/{checkpointId}", expiringCheckpointId), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.status").value("EXPIRED"))
+			.andExpect(jsonPath("$.data.version").value(2));
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}", fixture.taskId()), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.executionStatus").value("IDLE"));
+		taskVersion = taskVersion(fixture.taskId(), tenantId);
+
+		MvcResult reviewResponse = mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + taskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(staleReviewBody), tenantId))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.data.type").value("CONFIRM_CANDIDATE_LIST"))
+			.andExpect(jsonPath("$.data.status").value("PENDING"))
+			.andExpect(jsonPath("$.data.summary").isNotEmpty())
+			.andReturn();
+		UUID checkpointId = UUID.fromString(json(reviewResponse).at("/data/id").asText());
+		mockMvc.perform(withTenant(get("/api/core/v1/human-checkpoints")
+			.queryParam("taskId", fixture.taskId().toString())
+			.queryParam("type", "CONFIRM_CANDIDATE_LIST")
+			.queryParam("status", "PENDING")
+			.queryParam("limit", "1"), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.length()").value(1))
+			.andExpect(jsonPath("$.data[0].id").value(checkpointId.toString()))
+			.andExpect(jsonPath("$.meta.hasMore").value(false));
+		long pendingTaskVersion = taskVersion(fixture.taskId(), tenantId);
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + taskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(staleReviewBody), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + pendingTaskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(staleReviewBody), tenantId))
+			.andExpect(status().isCreated())
+			.andExpect(header().string("Idempotency-Replayed", "false"))
+			.andExpect(jsonPath("$.data.id").value(checkpointId.toString()))
+			.andExpect(jsonPath("$.data.status").value("PENDING"));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + pendingTaskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(objectMapper.writeValueAsString(Map.of(
+				"previewRef", previewRef,
+				"inputHash", inputHash,
+				"requiredRole", "HIRING_MANAGER"))), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("CHECKPOINT_RESOURCE_CHANGED"));
+		UUID decisionKey = UUID.randomUUID();
+		String decisionBody = objectMapper.writeValueAsString(Map.of(
+			"decision", "APPROVE",
+			"inputHash", inputHash,
+			"comment", "证据与待核实项已人工复核"));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/human-checkpoints/{checkpointId}/decisions", checkpointId)
+			.header("If-Match", "\"1\"")
+			.header("Idempotency-Key", decisionKey)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(decisionBody), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Idempotency-Replayed", "false"))
+			.andExpect(jsonPath("$.data.status").value("APPROVED"));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/human-checkpoints/{checkpointId}/decisions", checkpointId)
+			.header("If-Match", "\"1\"")
+			.header("Idempotency-Key", decisionKey)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(decisionBody), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Idempotency-Replayed", "true"))
+			.andExpect(jsonPath("$.data.status").value("APPROVED"));
+
+		long confirmTaskVersion = taskVersion(fixture.taskId(), tenantId);
+		String confirmBody = objectMapper.writeValueAsString(Map.of(
+			"previewRef", previewRef,
+			"checkpointId", checkpointId));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/confirm", fixture.taskId())
+			.header("If-Match", "\"" + (confirmTaskVersion + 100) + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(confirmBody), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+		UUID confirmKey = UUID.randomUUID();
+		MvcResult confirmedResponse = mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/confirm", fixture.taskId())
+			.header("If-Match", "\"" + confirmTaskVersion + "\"")
+			.header("Idempotency-Key", confirmKey)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(confirmBody), tenantId))
+			.andExpect(status().isCreated())
+			.andExpect(header().string("Idempotency-Replayed", "false"))
+			.andExpect(jsonPath("$.data.versionNo").value(1))
+			.andReturn();
+		JsonNode confirmed = json(confirmedResponse).path("data");
+		UUID candidateListId = UUID.fromString(confirmed.path("id").asText());
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/confirm", fixture.taskId())
+			.header("If-Match", "\"" + confirmTaskVersion + "\"")
+			.header("Idempotency-Key", confirmKey)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(confirmBody), tenantId))
+			.andExpect(status().isCreated())
+			.andExpect(header().string("Idempotency-Replayed", "true"))
+			.andExpect(jsonPath("$.data.id").value(candidateListId.toString()));
+		long postConfirmTaskVersion = taskVersion(fixture.taskId(), tenantId);
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/confirm", fixture.taskId())
+			.header("If-Match", "\"" + (postConfirmTaskVersion + 100) + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(confirmBody), tenantId))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+
+		MvcResult currentListResponse = mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/current", fixture.taskId()), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.id").value(candidateListId.toString()))
+			.andExpect(jsonPath("$.data.contentHash").value(confirmed.path("contentHash").asText()))
+			.andReturn();
+		assertThat(json(currentListResponse).at("/data/taskCandidateRefs/0/version").asLong())
+			.isEqualTo(taskCandidateVersion + 1);
+		MvcResult reportResponse = mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}/recommendation-reports/current", fixture.taskId()), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.candidateListVersionRef.id").value(candidateListId.toString()))
+			.andExpect(jsonPath("$.data.positionPlanVersionRef.id").value(fixture.planId().toString()))
+			.andExpect(jsonPath("$.data.scorecardVersionRef.id").value(fixture.scorecardId().toString()))
+			.andExpect(jsonPath("$.data.matchRunRef.id").value(runId.toString()))
+			.andReturn();
+		JsonNode report = json(reportResponse).path("data");
+		UUID reportId = UUID.fromString(report.path("id").asText());
+		JsonNode reportCandidate = report.at("/candidates/0");
+		assertThat(reportCandidate.path("selectionReason").asText()).contains("由 HR 纳入本次推荐名单");
+		assertThat(reportCandidate.path("note").asText()).isEqualTo("优先核实大型项目职责范围");
+		assertThat(reportCandidate.path("needsVerification").isArray()).isTrue();
+		assertThat(reportCandidate.path("criteria")).anySatisfy(criterion -> {
+			assertThat(criterion.path("sourceEvidenceRefs").isArray()).isTrue();
+			assertThat(criterion.path("systemJudgment").asText()).isNotBlank();
+		});
+		assertThat(reportCandidate.path("criteria")).anySatisfy(criterion ->
+			assertThat(criterion.path("sourceEvidenceRefs").isEmpty()).isFalse());
+
+		MvcResult textDownload = mockMvc.perform(withTenant(get(
+			"/api/core/v1/recommendation-reports/{reportId}/download", reportId)
+			.queryParam("format", "TXT"), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")))
+			.andReturn();
+		assertThat(textDownload.getResponse().getContentAsString(StandardCharsets.UTF_8))
+			.contains("推荐报告 v1", "选择理由", "优先核实大型项目职责范围", "原文证据", "系统判断", report.path("contentHash").asText());
+		MvcResult jsonDownload = mockMvc.perform(withTenant(get(
+			"/api/core/v1/recommendation-reports/{reportId}/download", reportId)
+			.queryParam("format", "JSON"), tenantId))
+			.andExpect(status().isOk())
+			.andReturn();
+		assertThat(objectMapper.readTree(jsonDownload.getResponse().getContentAsByteArray()).path("id").asText())
+			.isEqualTo(reportId.toString());
+
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}", fixture.taskId()), tenantId))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.businessStage").value("ONLINE_INTERVIEW"));
+		assertThat(jdbcTemplate.queryForObject(
+			"SELECT selection_status FROM task_candidate WHERE tenant_id = ? AND task_candidate_id = ?",
+			String.class, tenantId, taskCandidateId)).isEqualTo("CONFIRMED");
+		assertThat(jdbcTemplate.queryForObject(
+			"SELECT payload FROM audit_event WHERE tenant_id = ? AND resource_id = ? "
+				+ "AND action = 'CANDIDATE_LIST_CONFIRMED'",
+			String.class, tenantId, candidateListId.toString())).contains("\"externalActionCreated\":false");
+
+		UUID otherTenant = UUID.randomUUID();
+		jdbcTemplate.update(
+			"INSERT INTO tenant (tenant_id, tenant_key, display_name, status) VALUES (?, ?, ?, 'ACTIVE')",
+			otherTenant, TenantActorResolver.tenantKey(otherTenant), "Other candidate-list tenant");
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/current", fixture.taskId()), otherTenant))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/recommendation-reports/{reportId}", reportId), otherTenant))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(withTenant(get(
+			"/api/core/v1/candidate-list-previews/{previewId}", previewId), otherTenant))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(withTenant(get("/api/core/v1/human-checkpoints")
+			.queryParam("taskId", fixture.taskId().toString())
+			.queryParam("type", "CONFIRM_CANDIDATE_LIST"), otherTenant))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.data.length()").value(0));
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-previews", fixture.taskId())
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(previewBody), otherTenant))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-list-review-requests", fixture.taskId())
+			.header("If-Match", "\"" + postConfirmTaskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(staleReviewBody), otherTenant))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/human-checkpoints/{checkpointId}/decisions", checkpointId)
+			.header("If-Match", "\"2\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(decisionBody), otherTenant))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(withTenant(post(
+			"/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/confirm", fixture.taskId())
+			.header("If-Match", "\"" + postConfirmTaskVersion + "\"")
+			.header("Idempotency-Key", UUID.randomUUID())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(confirmBody), otherTenant))
+			.andExpect(status().isNotFound());
+	}
+
 	private ApprovedPlan approvedPlan() throws Exception {
 		return approvedPlan(null);
 	}
@@ -414,6 +862,13 @@ class MatchingLifecycleApiTests {
 			MockHttpServletRequestBuilder request,
 			UUID tenantId) {
 		return request.header(TenantActorResolver.TENANT_HEADER, tenantId);
+	}
+
+	private long taskVersion(UUID taskId, UUID tenantId) throws Exception {
+		return json(mockMvc.perform(withTenant(get(
+			"/api/core/v1/recruitment-tasks/{taskId}", taskId), tenantId))
+			.andExpect(status().isOk())
+			.andReturn()).at("/data/version").asLong();
 	}
 
 	private static MockHttpServletRequestBuilder inTenant(

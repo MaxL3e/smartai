@@ -76,7 +76,7 @@ const criticalEntrypoints = [
   ['role plan save', /disabled=\{planSaving\}\s+onClick=\{savePlan\}/, /岗位方案尚未确认/],
   ['G3 match', /onClick=\{\(\) => parsedResumeFiles\.length \? runServiceMatch\(false\) : setResumeLibraryOpen\(true\)\}/, /G3 匹配未完成/],
   ['resume library', /onClick=\{\(\) => setResumeLibraryOpen\(true\)\}/, /title="独立简历库" eyebrow="真实候选输入"/],
-  ['candidate confirmation', /onClick=\{confirmSelection\}/, /名单确认与推荐报告尚未后端化/],
+  ['candidate confirmation', /onClick=\{confirmSelection\}/, /确认并冻结名单/],
   ['interview reservation', /view === 'interviews' && <ReservedCapability type="interview"/, /不发送邀请，不调用消息或在线面试平台/],
   ['evaluation reservation', /view === 'evaluation' && <ReservedCapability type="evaluation"/, /不生成虚构面试分或测评分/],
   ['knowledge creation', /onClick=\{\(\) => setModalOpen\(true\)\}[\s\S]{0,120}新增知识/, /文件已上传，等待服务端解析|服务不可用，已保存本地草稿/],

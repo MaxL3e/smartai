@@ -98,11 +98,12 @@
 
 | ID | 输入/输出 | 协议与方向 | 数据权威 | 权限/人工门禁 | 幂等/版本要求 | MVP | 契约引用 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| GAT-01 | 生成候选名单确认预览：候选、关键证据、待核实项、邀请渠道/模板/期限和外部影响 | HTTPS REST，嵌入端 -> 平台（入/出） | 平台规范化预览权威；候选和简历原始事实由来源系统权威 | 招聘 HR；只能选择同一任务、同一匹配运行中的授权候选；预览不产生外部副作用 | `Idempotency-Key + taskVersion`；返回短期 `previewRef/inputHash/expiresAt`；候选去重 | P0 | `[OAS] createCandidateListPreview`；[DOMAIN §10.2](../architecture/domain-model.md#102-humancheckpoint) |
-| GAT-02 | 以未过期预览和服务端哈希创建 G4 待确认 checkpoint | HTTPS REST，嵌入端 -> 平台（入/出） | 平台 checkpoint 权威 | 招聘负责人/用人经理；确认前完整待确认正文必须与按钮同页可见 | `Idempotency-Key + If-Match`；checkpoint 绑定 `previewRef/inputHash`；预览变化后旧门禁失效 | P0 | `[OAS] requestCandidateListReview/getHumanCheckpoint` |
+| GAT-01 | 生成或恢复候选名单确认预览：候选、关键证据、待核实项、邀请渠道/模板/期限和外部影响 | HTTPS REST，嵌入端 -> 平台（入/出） | 平台规范化预览权威；候选和简历原始事实由来源系统权威 | 招聘 HR；只能选择同一任务、同一匹配运行中的授权候选；预览不产生外部副作用 | `Idempotency-Key + taskVersion`；返回短期 `previewRef/inputHash/expiresAt`；过期后仍可读取审计但不可审批 | P0 | `[OAS] createCandidateListPreview/getCandidateListPreview`；[DOMAIN §10.2](../architecture/domain-model.md#102-humancheckpoint) |
+| GAT-02 | 以未过期预览和服务端哈希创建或恢复 G4 待确认 checkpoint | HTTPS REST，嵌入端 -> 平台（入/出） | 平台 checkpoint 权威 | 招聘负责人/用人经理；确认前完整待确认正文必须与按钮同页可见 | `Idempotency-Key + If-Match`；checkpoint 绑定 `previewRef/inputHash`；同一预览重复请求返回已有门禁 | P0 | `[OAS] requestCandidateListReview/listHumanCheckpoints/getHumanCheckpoint` |
 | GAT-03 | 批准、退回或取消候选名单 checkpoint 并填写意见 | HTTPS REST，确认人 -> 平台（入） | 平台不可变 checkpoint 决策权威 | 招聘负责人/用人经理；禁止智能体代签；被退回后须生成新预览和门禁 | `Idempotency-Key + If-Match`；同一 checkpoint 只允许一次终态决策 | P0 | `[OAS] decideHumanCheckpoint` |
-| GAT-04 | 依据已批准 G4 checkpoint 冻结名单并查询可执行能力 | HTTPS REST，嵌入端 -> 平台（入/出） | 平台确认名单版本权威 | checkpoint 必须为当前任务、类型正确、已批准，且 `inputHash` 与 `previewRef` 一致；只有该精确名单版本可用于面试批次 | 冻结使用 `Idempotency-Key + If-Match`；名单版本不可变，记录 preview/checkpoint/邀请方案快照 | P0 | `[OAS] confirmCandidateList/listTaskCandidates/getHumanCheckpoint`；`[AAS] domainEventsV1(CandidateListConfirmed.v1)` |
+| GAT-04 | 依据已批准 G4 checkpoint 冻结名单并查询当前版本 | HTTPS REST，嵌入端 -> 平台（入/出） | 平台确认名单版本权威 | checkpoint 必须为当前任务、类型正确、已批准，且 `inputHash` 与 `previewRef` 一致；只有该精确名单版本可用于面试批次 | 冻结使用 `Idempotency-Key + If-Match`；名单版本不可变，记录 preview/checkpoint/邀请方案快照 | P0 | `[OAS] confirmCandidateList/getCurrentCandidateList/listTaskCandidates/getHumanCheckpoint`；`[AAS] domainEventsV1(CandidateListConfirmed.v1)` |
 | GAT-05 | 失效尚未执行的确认或创建变更单 | HTTPS REST，确认人 -> 平台（入） | 平台 | 仅在尚未产生不可逆外部副作用时允许；已邀请者进入补偿流程 | `Idempotency-Key + If-Match`；不删除历史确认；生成失效/补偿事件 | P1 | `[OAS gap] invalidateHumanCheckpoint` |
+| GAT-06 | 读取并下载与名单绑定的版本化推荐报告 | HTTPS REST，嵌入端 -> 平台（出） | 平台推荐报告版本权威；来源证据和系统判断保持分栏 | 具备任务数据权限的招聘 HR/负责人；下载不得扩展调用人的字段权限 | 报告绑定任务、岗位方案、评分卡、匹配运行和名单版本；内容哈希稳定；TXT/JSON 为同一版本的不同表示 | P0 | `[OAS] getCurrentRecommendationReport/getRecommendationReport/downloadRecommendationReport` |
 
 ## 7. 面试编排
 

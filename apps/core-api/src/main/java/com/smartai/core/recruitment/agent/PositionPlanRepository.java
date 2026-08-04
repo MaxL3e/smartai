@@ -3,6 +3,7 @@ package com.smartai.core.recruitment.agent;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -160,6 +161,61 @@ public class PositionPlanRepository {
 			(resultSet, rowNum) -> mapCheckpoint(resultSet),
 			tenantId,
 			checkpointId).stream().findFirst();
+	}
+
+	Optional<HumanCheckpoint> findCheckpointByResource(
+			UUID tenantId,
+			UUID resourceId,
+			long resourceVersion,
+			String checkpointType) {
+		return jdbcTemplate.query(
+			"SELECT * FROM human_checkpoint WHERE tenant_id = ? AND resource_id = ? "
+				+ "AND resource_version = ? AND checkpoint_type = ?",
+			(resultSet, rowNum) -> mapCheckpoint(resultSet),
+			tenantId,
+			resourceId,
+			resourceVersion,
+			checkpointType).stream().findFirst();
+	}
+
+	List<HumanCheckpoint> listCheckpoints(
+			UUID tenantId,
+			UUID taskId,
+			String status,
+			String type,
+			int limit,
+			int offset) {
+		StringBuilder sql = new StringBuilder("SELECT * FROM human_checkpoint WHERE tenant_id = ?");
+		List<Object> arguments = new ArrayList<>();
+		arguments.add(tenantId);
+		if (taskId != null) {
+			sql.append(" AND recruitment_task_id = ?");
+			arguments.add(taskId);
+		}
+		if (status != null) {
+			sql.append(" AND status = ?");
+			arguments.add(status);
+		}
+		if (type != null) {
+			sql.append(" AND checkpoint_type = ?");
+			arguments.add(type);
+		}
+		sql.append(" ORDER BY requested_at DESC, human_checkpoint_id DESC LIMIT ? OFFSET ?");
+		arguments.add(limit);
+		arguments.add(offset);
+		return jdbcTemplate.query(
+			sql.toString(),
+			(resultSet, rowNum) -> mapCheckpoint(resultSet),
+			arguments.toArray());
+	}
+
+	boolean lockTask(UUID tenantId, UUID taskId) {
+		return !jdbcTemplate.query(
+			"SELECT recruitment_task_id FROM recruitment_task "
+				+ "WHERE tenant_id = ? AND recruitment_task_id = ? FOR UPDATE",
+			(resultSet, rowNum) -> resultSet.getObject("recruitment_task_id", UUID.class),
+			tenantId,
+			taskId).isEmpty();
 	}
 
 	int updateCheckpoint(UUID tenantId, HumanCheckpoint previous, HumanCheckpoint updated, String updatedBy) {

@@ -936,8 +936,36 @@
         "responses": {
           "200": {
             "description": "G4 待确认正文和 inputHash",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "X-SmartAI-Input-Hash": { "schema": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+            },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListPreviewResponse" } } }
           },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/candidate-list-previews/{previewId}": {
+      "get": {
+        "tags": ["CandidateLists", "HumanCheckpoints"],
+        "summary": "读取 G4 候选名单确认预览",
+        "description": "用于页面刷新或操作中断后恢复待确认正文。过期预览仍可读取，但不能再用于审批或冻结名单。",
+        "operationId": "getCandidateListPreview",
+        "parameters": [
+          { "name": "previewId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "服务端冻结的 G4 待确认正文",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "X-SmartAI-Input-Hash": { "schema": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListPreviewResponse" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
           "default": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -946,7 +974,7 @@
       "post": {
         "tags": ["CandidateLists", "HumanCheckpoints"],
         "summary": "提交 G4 候选名单人工确认",
-        "description": "使用未过期的预览和服务端 inputHash 创建 CONFIRM_CANDIDATE_LIST 门禁；预览内容变化后旧门禁必须失效。",
+        "description": "使用未过期的预览和服务端 inputHash 创建 CONFIRM_CANDIDATE_LIST 门禁；同一预览已有门禁时返回原门禁，以支持中断恢复且不重复创建待办。",
         "operationId": "requestCandidateListReview",
         "x-human-gate": "CONFIRM_CANDIDATE_LIST",
         "parameters": [
@@ -996,6 +1024,94 @@
           },
           "409": { "$ref": "#/components/responses/VersionConflict" },
           "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/candidate-lists/current": {
+      "get": {
+        "tags": ["CandidateLists"],
+        "summary": "读取任务当前已确认候选名单版本",
+        "operationId": "getCurrentCandidateList",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前不可变候选名单版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CandidateListResponse" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recruitment-tasks/{taskId}/recommendation-reports/current": {
+      "get": {
+        "tags": ["CandidateLists"],
+        "summary": "读取任务当前推荐报告版本",
+        "operationId": "getCurrentRecommendationReport",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前版本化推荐报告",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationReportResponse" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recommendation-reports/{reportId}": {
+      "get": {
+        "tags": ["CandidateLists"],
+        "summary": "读取指定推荐报告版本",
+        "operationId": "getRecommendationReport",
+        "parameters": [
+          { "name": "reportId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "不可变推荐报告版本",
+            "headers": { "ETag": { "$ref": "#/components/headers/ETag" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationReportResponse" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/core/v1/recommendation-reports/{reportId}/download": {
+      "get": {
+        "tags": ["CandidateLists"],
+        "summary": "下载不可变推荐报告",
+        "operationId": "downloadRecommendationReport",
+        "parameters": [
+          { "name": "reportId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["TXT", "JSON"], "default": "TXT" } },
+          { "$ref": "#/components/parameters/RequestId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "TXT 或 JSON 推荐报告文件",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "Content-Disposition": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "text/plain": { "schema": { "type": "string" } },
+              "application/json": { "schema": { "$ref": "#/components/schemas/RecommendationReport" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" },
           "default": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -3025,6 +3141,7 @@
         "additionalProperties": false
       },
       "MatchReviewStatus": { "type": "string", "enum": ["UNREVIEWED", "REVIEWED", "NEEDS_VERIFICATION"] },
+      "RecommendationLevel": { "type": "string", "enum": ["NOT_RECOMMENDED", "REVIEW", "RECOMMENDED", "STRONGLY_RECOMMENDED"] },
       "EvidenceStatus": { "type": "string", "enum": ["SUPPORTED", "INSUFFICIENT", "CONFLICTING", "HUMAN_PROVIDED"] },
       "CriterionScore": {
         "type": "object",
@@ -3075,7 +3192,7 @@
           "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
           "rank": { "type": "integer", "minimum": 1 },
           "totalScore": { "type": "number", "minimum": 0, "maximum": 100 },
-          "recommendationLevel": { "type": "string", "enum": ["NOT_RECOMMENDED", "REVIEW", "RECOMMENDED", "STRONGLY_RECOMMENDED"] },
+          "recommendationLevel": { "$ref": "#/components/schemas/RecommendationLevel" },
           "generatorKind": { "$ref": "#/components/schemas/MatchGeneratorKind" },
           "hardFilterResult": { "$ref": "#/components/schemas/HardFilterResult" },
           "criterionScores": { "type": "array", "items": { "$ref": "#/components/schemas/CriterionScore" }, "minItems": 1, "maxItems": 50 },
@@ -3129,17 +3246,20 @@
         "properties": {
           "matchRunRef": { "$ref": "#/components/schemas/ResourceRef" },
           "taskCandidateRefs": { "type": "array", "items": { "$ref": "#/components/schemas/ResourceRef" }, "minItems": 1, "maxItems": 500, "uniqueItems": true },
+          "selectionNotes": { "type": "object", "propertyNames": { "format": "uuid" }, "additionalProperties": { "type": "string", "maxLength": 2000 }, "maxProperties": 500 },
           "invitationPlan": { "$ref": "#/components/schemas/CandidateInvitationPlan" }
         },
         "additionalProperties": false
       },
       "CandidateListPreviewItem": {
         "type": "object",
-        "required": ["taskCandidateRef", "matchResultRef", "candidate", "evidenceRefs", "needsVerification"],
+        "required": ["taskCandidateRef", "matchResultRef", "candidate", "selectionReason", "note", "evidenceRefs", "needsVerification"],
         "properties": {
           "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
           "matchResultRef": { "$ref": "#/components/schemas/ResourceRef" },
           "candidate": { "$ref": "#/components/schemas/CandidateSummary" },
+          "selectionReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "note": { "type": ["string", "null"], "maxLength": 2000 },
           "evidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 100 },
           "needsVerification": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 50 }
         },
@@ -3147,10 +3267,11 @@
       },
       "CandidateListPreview": {
         "type": "object",
-        "required": ["id", "taskId", "matchRunRef", "items", "invitationPlan", "inputHash", "expiresAt"],
+        "required": ["id", "taskId", "version", "matchRunRef", "items", "invitationPlan", "inputHash", "expiresAt"],
         "properties": {
           "id": { "$ref": "#/components/schemas/Uuid" },
           "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "version": { "type": "integer", "minimum": 1 },
           "matchRunRef": { "$ref": "#/components/schemas/ResourceRef" },
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/CandidateListPreviewItem" }, "minItems": 1, "maxItems": 500 },
           "invitationPlan": { "$ref": "#/components/schemas/CandidateInvitationPlan" },
@@ -3209,6 +3330,62 @@
         "allOf": [
           { "$ref": "#/components/schemas/SuccessEnvelope" },
           { "properties": { "data": { "$ref": "#/components/schemas/CandidateListVersion" } } }
+        ]
+      },
+      "RecommendationCriterion": {
+        "type": "object",
+        "required": ["criterionCode", "weightedScore", "evidenceStatus", "sourceEvidenceRefs", "systemJudgment"],
+        "properties": {
+          "criterionCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+          "weightedScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "evidenceStatus": { "$ref": "#/components/schemas/EvidenceStatus" },
+          "sourceEvidenceRefs": { "type": "array", "items": { "$ref": "#/components/schemas/EvidenceRef" }, "maxItems": 100 },
+          "systemJudgment": { "type": "string", "maxLength": 2000 }
+        },
+        "additionalProperties": false
+      },
+      "RecommendationCandidate": {
+        "type": "object",
+        "required": ["taskCandidateRef", "matchResultRef", "candidate", "resumeVersionRef", "rank", "totalScore", "recommendationLevel", "hardFilterPassed", "selectionReason", "note", "criteria", "needsVerification"],
+        "properties": {
+          "taskCandidateRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "matchResultRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "candidate": { "$ref": "#/components/schemas/CandidateSummary" },
+          "resumeVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "rank": { "type": "integer", "minimum": 1 },
+          "totalScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "recommendationLevel": { "$ref": "#/components/schemas/RecommendationLevel" },
+          "hardFilterPassed": { "type": "boolean" },
+          "selectionReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "note": { "type": ["string", "null"], "maxLength": 2000 },
+          "criteria": { "type": "array", "items": { "$ref": "#/components/schemas/RecommendationCriterion" }, "maxItems": 50 },
+          "needsVerification": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 50 }
+        },
+        "additionalProperties": false
+      },
+      "RecommendationReport": {
+        "type": "object",
+        "required": ["id", "taskId", "versionNo", "candidateListVersionRef", "positionPlanVersionRef", "scorecardVersionRef", "matchRunRef", "candidates", "generatedBy", "generatedAt", "contentHash"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/Uuid" },
+          "taskId": { "$ref": "#/components/schemas/Uuid" },
+          "version": { "$ref": "#/components/schemas/Version" },
+          "versionNo": { "type": "integer", "minimum": 1 },
+          "candidateListVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "positionPlanVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "scorecardVersionRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "matchRunRef": { "$ref": "#/components/schemas/ResourceRef" },
+          "candidates": { "type": "array", "items": { "$ref": "#/components/schemas/RecommendationCandidate" }, "minItems": 1, "maxItems": 500 },
+          "generatedBy": { "$ref": "#/components/schemas/UserRef" },
+          "generatedAt": { "type": "string", "format": "date-time" },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      },
+      "RecommendationReportResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SuccessEnvelope" },
+          { "properties": { "data": { "$ref": "#/components/schemas/RecommendationReport" } } }
         ]
       },
       "InterviewBatchStatus": { "type": "string", "enum": ["DRAFT", "SENDING", "ACTIVE", "COMPLETED", "PARTIAL", "CANCELLED", "FAILED"] },

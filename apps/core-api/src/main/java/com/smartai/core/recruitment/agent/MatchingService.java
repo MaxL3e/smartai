@@ -122,7 +122,7 @@ class MatchingService {
 			TaskCandidate taskCandidate = repository.findOrInsertTaskCandidate(
 				actor.tenantId(), taskId, item.candidate(), startedAt, actor.userId().toString());
 			MatchResult result = new MatchResult(
-				UUID.randomUUID(), running.id(), new ResourceRef("TaskCandidate", taskCandidate.id(), taskCandidate.version()),
+				UUID.randomUUID(), running.id(), new ResourceRef("TaskCandidate", taskCandidate.id(), taskCandidate.version() + 1),
 				item.candidate().candidate(), item.candidate().resumeVersionRef(), request.scorecardVersionRef(), rank,
 				item.totalScore(), item.recommendationLevel(), GENERATOR_KIND, item.hardFilterResult(), item.criterionScores(),
 				item.confidence(), "UNREVIEWED", 1L, item.needsVerification());

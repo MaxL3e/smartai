@@ -63,16 +63,26 @@ import {
 import {
   DEMO_CANDIDATE_CONNECTOR_ID,
   convertRequirementDraft,
+  confirmCandidateList,
+  createCandidateListPreview,
   createMatchRun,
   decideHumanCheckpoint,
+  downloadRecommendationReport,
+  getCandidateListPreview,
   generatePositionPlan,
+  getCurrentCandidateList,
   getCurrentPositionPlan,
+  getCurrentRecommendationReport,
+  getHumanCheckpoint,
+  getRecruitmentTask,
   getRequirementDraft,
   listMatchResults,
+  listHumanCheckpoints,
   mapPositionPlanResponse,
   mapRecruitmentTaskResponse,
   mapRequirementDraftResponse,
   requestPositionPlanReview,
+  requestCandidateListReview,
   resolveRequirementDraft,
   submitCandidateInput,
   updatePositionPlan,
@@ -304,6 +314,7 @@ function loadStored(key, fallback) {
 function normalizeStoredTasks(value) {
   if (!Array.isArray(value) || value.length === 0) return initialTasks;
   return value.map((task) => {
+    if (task.serviceCandidateList?.id) return task;
     if (['在线面试', '综合评价', '已完成'].includes(task.stage)) {
       return { ...task, stage: '名单确认', progress: 48, tone: 'blue', legacyStage: task.stage };
     }
@@ -347,7 +358,7 @@ function normalizeStoredEvents(value) {
   return value
     .filter((event) => !/发送面试|面试提醒|收到在线面试|面试结果|综合评价|撤回面试|更新面试截止/.test(event?.title || ''))
     .map((event) => event?.title === '保存 G4 演示名单'
-      ? { ...event, title: '保存推荐名单草稿', detail: String(event.detail || '').replace('未创建服务端名单或面试邀请', '未创建服务端确认版本或执行外部动作') }
+      ? { ...event, title: '历史本地名单草稿', detail: String(event.detail || '').replace('未创建服务端名单或面试邀请', '历史记录未创建服务端确认版本或执行外部动作') }
       : event);
 }
 
@@ -444,6 +455,17 @@ function stageIndex(stage) {
 
 function nextStage(stage) {
   return { 岗位方案: '人才搜索', 人才搜索: '名单确认' }[stage] || stage;
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 const defaultPlanThresholds = { strong: 88, recommended: 80, review: 70 };
@@ -1623,7 +1645,7 @@ function App() {
   function advanceFlow() {
     if (activeTask.stage === '名单确认') {
       setView('talent');
-      notify('请在人才匹配中核对并保存推荐名单草稿');
+      notify('请在人才匹配中核对候选人并确认推荐名单');
       return;
     }
     const target = nextStage(activeTask.stage);
@@ -2127,6 +2149,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
   const matchingServicePending = serviceTask && !activeTask.serviceMatchRun;
   const serviceMatchEmpty = serviceTask && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
   const serviceNeedsMatch = matchingServicePending || serviceMatchEmpty;
+  const candidateListConfirmed = Boolean(activeTask.serviceCandidateList?.id || activeTask.demoCandidateSelectionConfirmed);
   const matchMetrics = activeTask.serviceMatchRun?.metrics;
   const strongMatches = candidatePool.filter((person) => person.status === '强烈推荐').length;
   const stageMessage = serviceNeedsMatch && activeTask.stage === '人才搜索'
@@ -2135,7 +2158,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
     岗位方案: '正在等待人工确认岗位方案',
     人才搜索: '正在检索集团人才库并生成匹配排序',
     名单确认: '正在等待人工确认候选名单',
-    在线面试: '正在跟踪候选人在线面试状态',
+    在线面试: '推荐名单已确认，在线面试接口已预留',
     综合评价: '正在等待人工确认综合评价',
     已完成: '任务已完成，等待招聘结果回流',
   }[activeTask.stage]);
@@ -2173,7 +2196,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
       ? { label: serviceMatchEmpty ? '重新运行人才匹配' : '运行人才匹配', action: () => setView('talent') }
       : { label: '运行人才搜索', action: advanceFlow },
     名单确认: { label: '确认候选名单', action: () => setView('talent') },
-    在线面试: { label: '查看面试进度', action: () => setView('interviews') },
+    在线面试: { label: '查看面试预留', action: () => setView('interviews') },
     综合评价: { label: '查看综合评价', action: () => setView('evaluation') },
     已完成: { label: '查看归档结果', action: () => setView('evaluation') },
   }[activeTask.stage];
@@ -2235,7 +2258,7 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
             <div><span>本轮扫描</span><strong>{matchMetrics?.scanned ?? '2,846'}</strong><small>份候选输入</small></div>
             <div><span>完成评分</span><strong>{matchMetrics?.scored ?? candidatePool.length}</strong><small>固定规则计算</small></div>
             <div><span>强推荐</span><strong>{activeTask.serviceMatchRun ? strongMatches : 3}</strong><small>达到岗位阈值</small></div>
-            <div><span>已选择</span><strong>{selectedCandidates.length}</strong><small>等待确认</small></div>
+            <div><span>{candidateListConfirmed ? '已确认' : '已选择'}</span><strong>{selectedCandidates.length}</strong><small>{candidateListConfirmed ? '名单已冻结' : '等待确认'}</small></div>
           </div>
           <div className="candidate-preview-list">
             {candidatePool.slice(0, 3).map((person, index) => (
@@ -2250,8 +2273,8 @@ function Workspace({ flowStep, selectedCandidates, candidatePool, setSelectedCan
             ))}
           </div>
           <div className="decision-bar">
-            <div><UserCheck size={20} /><span><strong>需要你的确认</strong><small>智能体建议将前 3 位候选人加入推荐名单，并生成可追溯报告</small></span></div>
-            <button className="btn primary" onClick={() => setView('talent')}>前往确认 {selectedCandidates.length} 人 <ArrowRight size={17} /></button>
+            <div>{candidateListConfirmed ? <CheckCircle2 size={20} /> : <UserCheck size={20} />}<span><strong>{candidateListConfirmed ? '推荐名单已确认' : '需要你的确认'}</strong><small>{candidateListConfirmed ? `不可变名单 v${activeTask.serviceCandidateList?.versionNo || 1} 与推荐报告已生成，未执行外部动作` : '智能体建议将前 3 位候选人加入推荐名单，并生成可追溯报告'}</small></span></div>
+            <button className="btn primary" onClick={() => setView('talent')}>{candidateListConfirmed ? '查看名单与报告' : `前往确认 ${selectedCandidates.length} 人`} <ArrowRight size={17} /></button>
           </div>
           </>}
         </section>
@@ -3017,15 +3040,100 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
   const [resumeLoading, setResumeLoading] = useState(true);
   const [resumeError, setResumeError] = useState('');
   const [uploadQueue, setUploadQueue] = useState([]);
+  const [candidateListDialogOpen, setCandidateListDialogOpen] = useState(false);
+  const [candidateListPreview, setCandidateListPreview] = useState(null);
+  const [candidateListPending, setCandidateListPending] = useState(false);
+  const [candidateListError, setCandidateListError] = useState('');
+  const [candidateNotes, setCandidateNotes] = useState({});
   const matchOperationKeysRef = useRef(new Map());
   const parsedResumeFiles = useMemo(() => resumeFiles.filter((item) => item.parseStatusCode === 'PARSED' && item.candidate), [resumeFiles]);
   const resumeFixtures = useMemo(() => parsedResumeFiles.map((record, index) => resumeRecordToFixture(record, index, activeTask)), [parsedResumeFiles, activeTask]);
   const selected = candidatePool.find((item) => item.id === selectedCandidate) || candidatePool[0];
+  const selectedForConfirmation = useMemo(
+    () => candidatePool.filter((person) => selectedCandidates.includes(person.id)),
+    [candidatePool, selectedCandidates],
+  );
   const serviceMatchNotStarted = activeTask.creationMode === 'service' && activeTask.planConfirmed && !activeTask.serviceMatchRun;
   const serviceMatchEmpty = activeTask.creationMode === 'service' && Boolean(activeTask.serviceMatchRun) && candidatePool.length === 0;
+  const resumableCandidateListCheckpoint = ['PENDING', 'APPROVED'].includes(activeTask.serviceCandidateListCheckpoint?.status)
+    ? activeTask.serviceCandidateListCheckpoint
+    : null;
   const filteredCandidates = useMemo(() => candidatePool.filter((person) => person.score >= Number(minScore) && (!onlySelected || selectedCandidates.includes(person.id)) && `${person.name}${person.title}${person.company}${person.highlights.join('')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => matchStrategy.sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : b.score - a.score), [candidatePool, query, minScore, onlySelected, selectedCandidates, matchStrategy.sort]);
   useEffect(() => setMinScore(matchStrategy.minScore || 70), [matchStrategy.minScore]);
   useEffect(() => { refreshResumeLibrary(); }, []);
+  useEffect(() => {
+    if (!activeTask.serviceTask?.id || !activeTask.serviceMatchRun?.id) return undefined;
+    let disposed = false;
+    Promise.allSettled([
+      getCurrentCandidateList(activeTask, { accessToken: getAccessToken?.() }),
+      getCurrentRecommendationReport(activeTask, { accessToken: getAccessToken?.() }),
+    ]).then(([listResult, reportResult]) => {
+      if (disposed) return;
+      const updates = {};
+      if (listResult.status === 'fulfilled') {
+        updates.demoCandidateSelectionConfirmed = true;
+        updates.serviceCandidateList = listResult.value.data || listResult.value;
+        updates.stage = '在线面试';
+        updates.progress = 68;
+        updates.tone = 'green';
+      }
+      if (reportResult.status === 'fulfilled') {
+        updates.serviceRecommendationReport = reportResult.value.data || reportResult.value;
+      }
+      if (Object.keys(updates).length) updateActiveTask(updates);
+      const recoveryError = [listResult, reportResult]
+        .filter((result) => result.status === 'rejected' && result.reason?.status !== 404)
+        .map((result) => result.reason)[0];
+      if (recoveryError) setCandidateListError(recoveryError.message || '已确认名单恢复失败');
+    });
+    return () => { disposed = true; };
+  }, [activeTask.serviceTask?.id, activeTask.serviceMatchRun?.id]);
+  useEffect(() => {
+    if (!activeTask.serviceTask?.id || !activeTask.serviceMatchRun?.id || activeTask.serviceCandidateList?.id) return undefined;
+    let disposed = false;
+    async function restoreCandidateListReview() {
+      try {
+        const accessToken = getAccessToken?.();
+        let checkpoint = activeTask.serviceCandidateListCheckpoint || null;
+        if (checkpoint?.id) {
+          const envelope = await getHumanCheckpoint(checkpoint.id, { accessToken });
+          checkpoint = envelope.data || envelope;
+        } else {
+          const envelope = await listHumanCheckpoints(activeTask, {
+            type: 'CONFIRM_CANDIDATE_LIST',
+            limit: 1,
+          }, { accessToken });
+          checkpoint = (envelope.data || [])[0] || null;
+        }
+        if (!checkpoint?.resourceRef?.id || disposed) return;
+        const previewEnvelope = await getCandidateListPreview(checkpoint.resourceRef.id, { accessToken });
+        const preview = previewEnvelope.data || previewEnvelope;
+        if (disposed) return;
+        const restoredNotes = Object.fromEntries((preview.items || [])
+          .filter((item) => item.note)
+          .map((item) => [item.taskCandidateRef.id, item.note]));
+        setCandidateListPreview(preview);
+        setCandidateNotes(restoredNotes);
+        updateActiveTask({
+          serviceCandidateListPreview: preview,
+          serviceCandidateListCheckpoint: checkpoint,
+        });
+      } catch (error) {
+        if (!disposed && error.status !== 404) {
+          setCandidateListError(error.message || '\u5f85\u786e\u8ba4\u63a8\u8350\u540d\u5355\u6062\u590d\u5931\u8d25');
+        }
+      }
+    }
+    restoreCandidateListReview();
+    return () => { disposed = true; };
+  }, [activeTask.serviceTask?.id, activeTask.serviceMatchRun?.id]);
+  useEffect(() => {
+    const preview = activeTask.serviceCandidateListPreview;
+    if (!preview?.id) return;
+    setCandidateNotes(Object.fromEntries((preview.items || [])
+      .filter((item) => item.note)
+      .map((item) => [item.taskCandidateRef.id, item.note])));
+  }, [activeTask.serviceCandidateListPreview?.id]);
 
   async function refreshResumeLibrary() {
     setResumeLoading(true);
@@ -3122,28 +3230,272 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
     }
   }
 
-  function confirmSelection() {
+  async function confirmSelection() {
     if (!activeTask.planConfirmed && activeTask.stage === '岗位方案') {
       notify('请先确认岗位方案，再确认推荐名单');
       setView('roleplan');
+      return;
+    }
+    if (resumableCandidateListCheckpoint && activeTask.serviceTask?.id && activeTask.serviceMatchRun?.id) {
+      setCandidateListDialogOpen(true);
+      setCandidateListPending(true);
+      setCandidateListError('');
+      try {
+        let preview = activeTask.serviceCandidateListPreview;
+        if (!preview?.id) {
+          const envelope = await getCandidateListPreview(
+            resumableCandidateListCheckpoint.resourceRef?.id,
+            { accessToken: getAccessToken?.() },
+          );
+          preview = envelope.data || envelope;
+        }
+        const restoredNotes = Object.fromEntries((preview.items || [])
+          .filter((item) => item.note)
+          .map((item) => [item.taskCandidateRef.id, item.note]));
+        setCandidateListPreview(preview);
+        setCandidateNotes(restoredNotes);
+        updateActiveTask({ serviceCandidateListPreview: preview });
+      } catch (error) {
+        setCandidateListError(error.message || '\u5f85\u786e\u8ba4\u63a8\u8350\u540d\u5355\u6062\u590d\u5931\u8d25');
+      } finally {
+        setCandidateListPending(false);
+      }
       return;
     }
     if (!selectedCandidates.length) {
       notify('请至少选择一位候选人');
       return;
     }
-    updateActiveTask({ demoCandidateSelectionConfirmed: true });
-    pushEvent('保存推荐名单草稿', `本地保存 ${selectedCandidates.length} 位候选人的选择；未创建服务端确认版本或执行外部动作`, 'human');
-    notify('推荐名单草稿已保存；服务端确认与推荐报告将在下一阶段实现');
+    if (!activeTask.serviceTask?.id || !activeTask.serviceMatchRun?.id) {
+      notify('请先在服务端招聘任务中完成 G3 匹配');
+      return;
+    }
+    setCandidateListDialogOpen(true);
+    setCandidateListPending(true);
+    setCandidateListError('');
+    setCandidateListPreview(null);
+    try {
+      const taskEnvelope = await getRecruitmentTask(activeTask, { accessToken: getAccessToken?.() });
+      const currentServiceTask = taskEnvelope.data || taskEnvelope;
+      updateActiveTask({
+        serviceTask: {
+          ...activeTask.serviceTask,
+          ...currentServiceTask,
+          etag: taskEnvelope.__responseMeta?.etag || `"${currentServiceTask.version}"`,
+        },
+      });
+      const deadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const envelope = await createCandidateListPreview(activeTask, {
+        matchRunRef: {
+          type: 'MatchRun',
+          id: activeTask.serviceMatchRun.id,
+          version: Number(activeTask.serviceMatchRun.version),
+        },
+        taskCandidateRefs: selectedForConfirmation.map((person) => ({
+          type: 'TaskCandidate',
+          id: person.id,
+          version: Number(person.serviceMatchResult?.taskCandidateRef?.version || 1),
+        })),
+        selectionNotes: candidateNotes,
+        invitationPlan: {
+          connectorId: '00000000-0000-0000-0000-000000000401',
+          templateId: 'reserved-online-interview-v1',
+          deadline,
+          channel: 'EMAIL',
+          messageTemplateId: 'reserved-candidate-invitation-v1',
+          externalImpactSummary: '本次操作只确认并冻结推荐名单，不创建面试批次、不发送邀请、不调用外部系统。',
+        },
+      }, {
+        accessToken: getAccessToken?.(),
+        idempotencyKey: globalThis.crypto?.randomUUID?.() || `candidate-list-preview-${Date.now()}`,
+      });
+      const preview = envelope.data || envelope;
+      setCandidateListPreview(preview);
+      updateActiveTask({
+        serviceCandidateListPreview: preview,
+        serviceCandidateListCheckpoint: null,
+      });
+    } catch (error) {
+      setCandidateListError(error.message || '推荐名单确认预览生成失败');
+    } finally {
+      setCandidateListPending(false);
+    }
+  }
+
+  async function approveCandidateList() {
+    if (!candidateListPreview || candidateListPending) return;
+    setCandidateListPending(true);
+    setCandidateListError('');
+    try {
+      const accessToken = getAccessToken?.();
+      let checkpoint = activeTask.serviceCandidateListCheckpoint || null;
+      const frozenNotes = Object.fromEntries((candidateListPreview.items || [])
+        .filter((item) => item.note)
+        .map((item) => [item.taskCandidateRef.id, item.note]));
+      const normalizedNotes = Object.fromEntries(Object.entries(candidateNotes)
+        .filter(([, note]) => String(note || '').trim())
+        .map(([candidateId, note]) => [candidateId, String(note).trim()]));
+      let previewToConfirm = candidateListPreview;
+      if (JSON.stringify(frozenNotes) !== JSON.stringify(normalizedNotes)) {
+        const checkpointToSupersede = checkpoint;
+        const refreshedEnvelope = await createCandidateListPreview(activeTask, {
+          matchRunRef: candidateListPreview.matchRunRef,
+          taskCandidateRefs: (candidateListPreview.items || []).map((item) => item.taskCandidateRef),
+          selectionNotes: normalizedNotes,
+          invitationPlan: candidateListPreview.invitationPlan,
+        }, {
+          accessToken,
+          idempotencyKey: globalThis.crypto?.randomUUID?.() || `candidate-list-preview-${Date.now()}`,
+        });
+        previewToConfirm = refreshedEnvelope.data || refreshedEnvelope;
+        if (checkpointToSupersede?.id && checkpointToSupersede.status === 'PENDING') {
+          const checkpointEnvelope = await getHumanCheckpoint(checkpointToSupersede.id, { accessToken });
+          const currentCheckpoint = checkpointEnvelope.data || checkpointEnvelope;
+          if (currentCheckpoint.status === 'PENDING') {
+            await decideHumanCheckpoint(currentCheckpoint, {
+              accessToken,
+              decision: 'CANCEL',
+              comment: 'HR 已更新名单备注，旧确认预览由新版本替代。',
+              idempotencyKey: globalThis.crypto?.randomUUID?.() || `candidate-list-supersede-${Date.now()}`,
+            });
+          }
+        }
+        setCandidateListPreview(previewToConfirm);
+        checkpoint = null;
+        updateActiveTask({
+          serviceCandidateListPreview: previewToConfirm,
+          serviceCandidateListCheckpoint: null,
+        });
+      }
+      const previewRef = {
+        type: 'CandidateListPreview',
+        id: previewToConfirm.id,
+        version: Number(previewToConfirm.version || 1),
+      };
+      const checkpointMatchesPreview = checkpoint
+        && checkpoint.resourceRef?.id === previewRef.id
+        && Number(checkpoint.resourceRef?.version) === previewRef.version
+        && checkpoint.inputHash === previewToConfirm.inputHash;
+      if (checkpointMatchesPreview) {
+        const checkpointEnvelope = await getHumanCheckpoint(checkpoint.id, { accessToken });
+        checkpoint = checkpointEnvelope.data || checkpointEnvelope;
+        if (!['PENDING', 'APPROVED'].includes(checkpoint.status)) checkpoint = null;
+      } else {
+        checkpoint = null;
+      }
+      const reviewTaskEnvelope = await getRecruitmentTask(activeTask, { accessToken });
+      const reviewServiceTask = reviewTaskEnvelope.data || reviewTaskEnvelope;
+      const reviewTask = {
+        ...activeTask,
+        serviceTask: {
+          ...activeTask.serviceTask,
+          ...reviewServiceTask,
+          etag: reviewTaskEnvelope.__responseMeta?.etag || `"${reviewServiceTask.version}"`,
+        },
+      };
+      updateActiveTask({
+        serviceTask: reviewTask.serviceTask,
+        serviceCandidateListPreview: previewToConfirm,
+        serviceCandidateListCheckpoint: checkpoint,
+      });
+      const reviewEnvelope = checkpoint ? null : await requestCandidateListReview(reviewTask, {
+        previewRef,
+        inputHash: previewToConfirm.inputHash,
+        requiredRole: 'RECRUITMENT_MANAGER',
+        assigneeUserId: null,
+        comment: '招聘负责人已核对候选人、证据、待核实项和外部影响。',
+        expiresAt: null,
+      }, {
+        accessToken,
+        idempotencyKey: globalThis.crypto?.randomUUID?.() || `candidate-list-review-${Date.now()}`,
+      });
+      checkpoint = checkpoint || reviewEnvelope.data || reviewEnvelope;
+      updateActiveTask({
+        serviceCandidateListPreview: previewToConfirm,
+        serviceCandidateListCheckpoint: checkpoint,
+      });
+      const decisionEnvelope = checkpoint.status === 'PENDING' ? await decideHumanCheckpoint(checkpoint, {
+        accessToken,
+        decision: 'APPROVE',
+        comment: '确认当前推荐名单，仅冻结名单版本，不发送面试邀请。',
+        idempotencyKey: globalThis.crypto?.randomUUID?.() || `candidate-list-decision-${Date.now()}`,
+      }) : { data: checkpoint };
+      const approvedCheckpoint = decisionEnvelope.data || decisionEnvelope;
+      if (approvedCheckpoint.status !== 'APPROVED') {
+        throw new Error('\u5f53\u524d\u4eba\u5de5\u786e\u8ba4\u70b9\u672a\u6279\u51c6\uff0c\u65e0\u6cd5\u51bb\u7ed3\u63a8\u8350\u540d\u5355');
+      }
+      updateActiveTask({
+        serviceCandidateListPreview: previewToConfirm,
+        serviceCandidateListCheckpoint: approvedCheckpoint,
+      });
+      const taskEnvelope = await getRecruitmentTask(activeTask, { accessToken });
+      const currentServiceTask = taskEnvelope.data || taskEnvelope;
+      const confirmationTask = {
+        ...activeTask,
+        serviceTask: {
+          ...activeTask.serviceTask,
+          ...currentServiceTask,
+          etag: taskEnvelope.__responseMeta?.etag || `"${currentServiceTask.version}"`,
+        },
+      };
+      updateActiveTask({ serviceTask: confirmationTask.serviceTask });
+      const listEnvelope = await confirmCandidateList(confirmationTask, {
+        previewRef,
+        checkpointId: approvedCheckpoint.id,
+      }, {
+        accessToken,
+        idempotencyKey: globalThis.crypto?.randomUUID?.() || `candidate-list-confirm-${Date.now()}`,
+      });
+      const confirmedList = listEnvelope.data || listEnvelope;
+      const reportEnvelope = await getCurrentRecommendationReport(activeTask, { accessToken });
+      const recommendationReport = reportEnvelope.data || reportEnvelope;
+      updateActiveTask({
+        demoCandidateSelectionConfirmed: true,
+        serviceCandidateListPreview: previewToConfirm,
+        serviceCandidateListCheckpoint: approvedCheckpoint,
+        serviceCandidateList: confirmedList,
+        serviceRecommendationReport: recommendationReport,
+        stage: '在线面试',
+        progress: 68,
+        tone: 'green',
+      });
+      pushEvent('G4 推荐名单已确认', `招聘负责人确认 ${confirmedList.taskCandidateRefs?.length || selectedForConfirmation.length} 位候选人，已生成不可变名单 v${confirmedList.versionNo || 1}；未执行任何外部动作`, 'human');
+      notify(`推荐名单 v${confirmedList.versionNo || 1} 已冻结，推荐报告可查看和导出`);
+    } catch (error) {
+      setCandidateListError(error.message || '推荐名单确认失败');
+    } finally {
+      setCandidateListPending(false);
+    }
+  }
+
+  async function downloadConfirmedReport(format) {
+    const report = activeTask.serviceRecommendationReport;
+    if (!report?.id) {
+      setCandidateListError('服务端推荐报告尚未就绪，请刷新后重试');
+      return;
+    }
+    setCandidateListPending(true);
+    setCandidateListError('');
+    try {
+      const result = await downloadRecommendationReport(report.id, format, { accessToken: getAccessToken?.() });
+      downloadBlob(result.fileName, result.blob);
+      notify(`${format} 推荐报告已导出`);
+    } catch (error) {
+      setCandidateListError(error.message || '推荐报告下载失败');
+    } finally {
+      setCandidateListPending(false);
+    }
   }
   return (
     <>
       <PageHeader eyebrow={`${activeTask.code} / 人才搜索`} title="人才匹配" description={serviceMatchNotStarted ? '岗位方案已批准，等待运行 G3 标准化候选输入、硬条件过滤、固定评分和证据解释' : activeTask.serviceMatchRun ? `G3 服务端匹配已完成 · ${activeTask.serviceMatchRun.pipelineVersion}` : `基于“${activeTask.role}”岗位方案的候选人排序`}
         actions={<><button className="btn secondary" onClick={() => setResumeLibraryOpen(true)}><UploadCloud size={17} />简历库{parsedResumeFiles.length ? ` ${parsedResumeFiles.length}` : ''}</button>{serviceMatchNotStarted || serviceMatchEmpty
           ? <button className="btn primary" disabled={matchPending} onClick={() => parsedResumeFiles.length ? runServiceMatch(false) : setResumeLibraryOpen(true)}>{matchPending ? <RefreshCw className="spin" size={17} /> : parsedResumeFiles.length ? <Play size={17} /> : <Plus size={17} />}{matchPending ? '正在执行 G3' : parsedResumeFiles.length ? `匹配 ${parsedResumeFiles.length} 份简历` : '上传真实简历'}</button>
-          : <button className="btn primary" disabled={!candidatePool.length} onClick={confirmSelection}><Save size={17} />保存推荐名单草稿</button>}</>} />
+          : activeTask.serviceCandidateList
+            ? <button className="btn primary" onClick={() => { setCandidateListPreview(activeTask.serviceCandidateListPreview); setCandidateListDialogOpen(true); }}><FileText size={17} />查看推荐报告</button>
+            : <button className="btn primary" disabled={(!candidatePool.length && !resumableCandidateListCheckpoint) || candidateListPending} onClick={confirmSelection}>{candidateListPending ? <RefreshCw className="spin" size={17} /> : <UserCheck size={17} />}{candidateListPending ? '正在恢复确认状态' : resumableCandidateListCheckpoint ? (resumableCandidateListCheckpoint.status === 'APPROVED' ? '完成名单冻结' : '继续名单确认') : `确认推荐名单${selectedCandidates.length ? ` ${selectedCandidates.length}` : ''}`}</button>}</>} />
       {(serviceMatchNotStarted || serviceMatchEmpty) && <section className="agent-boundary-notice"><ShieldCheck size={18} /><div><strong>{serviceMatchEmpty ? '上次运行没有产生推荐结果' : 'G3 智能体服务已就绪'}</strong><p>{parsedResumeFiles.length ? `独立简历库已有 ${parsedResumeFiles.length} 份解析完成的简历，可直接按已批准评分卡运行匹配。` : '上传 PDF、Word 或 TXT 简历后，系统会保留原件与不可变版本，并将有证据的结构化结果送入 G3。'}</p></div></section>}
-      {activeTask.serviceMatchRun && !serviceMatchEmpty && <section className="agent-boundary-notice success"><CheckCircle2 size={18} /><div><strong>当前候选排序来自 G3 服务端</strong><p>结果绑定岗位方案、评分卡和简历版本。名单确认与推荐报告尚未后端化，页面当前只保存名单草稿，不会执行任何外部动作。</p></div></section>}
+      {activeTask.serviceMatchRun && !serviceMatchEmpty && <section className="agent-boundary-notice success"><CheckCircle2 size={18} /><div><strong>{activeTask.serviceCandidateList ? `推荐名单 v${activeTask.serviceCandidateList.versionNo || 1} 已冻结` : '当前候选排序来自 G3 服务端'}</strong><p>{activeTask.serviceCandidateList ? '名单、匹配运行、岗位方案、评分卡和简历版本均已绑定。在线面试仍为接口预留，没有发送任何邀请。' : '结果绑定岗位方案、评分卡和简历版本。选择候选人后将先展示完整确认正文，再由招聘负责人冻结不可变名单版本。'}</p></div></section>}
       {matchError && <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>G3 匹配未完成</strong><small>{matchError}</small></span></div>}
       {serviceMatchNotStarted || serviceMatchEmpty ? <section className="panel workspace-gate talent-service-start">
         <span className="workspace-gate-icon searching">{parsedResumeFiles.length ? <UsersRound size={26} /> : <UploadCloud size={26} />}</span>
@@ -3178,8 +3530,52 @@ function Talent({ selectedCandidate, setSelectedCandidate, selectedCandidates, c
       </div>
       </>}
       {resumeLibraryOpen && <ResumeLibraryDialog records={resumeFiles} queue={uploadQueue} loading={resumeLoading} error={resumeError} matchPending={matchPending} onClose={() => setResumeLibraryOpen(false)} onRefresh={refreshResumeLibrary} onUpload={uploadFiles} onRun={() => runServiceMatch(false)} onRunDemo={() => runServiceMatch(true)} />}
+      {candidateListDialogOpen && <CandidateListConfirmationDialog task={activeTask} preview={candidateListPreview || activeTask.serviceCandidateListPreview} candidates={selectedForConfirmation} confirmedList={activeTask.serviceCandidateList} serverReport={activeTask.serviceRecommendationReport} notes={candidateNotes} pending={candidateListPending} error={candidateListError} onApprove={approveCandidateList} onNoteChange={(candidateId, note) => setCandidateNotes((current) => ({ ...current, [candidateId]: note }))} onDownload={downloadConfirmedReport} onClose={() => !candidateListPending && setCandidateListDialogOpen(false)} />}
     </>
   );
+}
+
+function CandidateListConfirmationDialog({ task, preview, candidates, confirmedList, serverReport, notes, pending, error, onApprove, onNoteChange, onDownload, onClose }) {
+  const items = preview?.items?.length ? preview.items : (serverReport?.candidates || []).map((candidate) => ({
+    taskCandidateRef: candidate.taskCandidateRef,
+    matchResultRef: candidate.matchResultRef,
+    candidate: candidate.candidate,
+    evidenceRefs: (candidate.criteria || []).flatMap((criterion) => criterion.sourceEvidenceRefs || []),
+    needsVerification: candidate.needsVerification || [],
+  }));
+  const actions = confirmedList
+    ? <><button className="btn secondary" disabled={pending} onClick={() => onDownload?.('JSON')}><Download size={16} />JSON</button><button className="btn secondary" disabled={pending} onClick={() => onDownload?.('TXT')}><Download size={16} />TXT</button><button className="btn primary" disabled={pending} onClick={onClose}>完成</button></>
+    : <><button className="btn secondary" disabled={pending} onClick={onClose}>取消</button><button className="btn primary" disabled={pending || !preview || Boolean(error)} onClick={onApprove}>{pending ? <RefreshCw className="spin" size={16} /> : <ShieldCheck size={16} />}{pending ? '正在确认并固化' : '确认并冻结名单'}</button></>;
+  return <DialogShell title={confirmedList ? `推荐报告 · 名单 v${confirmedList.versionNo || 1}` : '确认推荐名单'} eyebrow={`${task.code} / G4 人工门禁`} onClose={pending ? undefined : onClose} wide actions={actions}>
+    {pending && !preview && <div className="candidate-list-preview-loading"><RefreshCw className="spin" size={22} /><div><strong>正在生成服务端确认预览</strong><p>系统正在冻结匹配运行、候选人、简历版本和证据引用。</p></div></div>}
+    {error && <div className="service-error-banner" role="alert"><AlertTriangle size={17} /><span><strong>名单确认未完成</strong><small>{error}</small></span></div>}
+    {(preview || serverReport) && <>
+      <div className="candidate-list-confirm-summary">
+        <span><small>候选人数</small><strong>{items.length}</strong></span>
+        <span><small>匹配运行</small><strong>{String(preview?.matchRunRef?.id || serverReport?.matchRunRef?.id || '-').slice(0, 8)}</strong></span>
+        <span><small>确认哈希</small><strong>{String(preview?.inputHash || confirmedList?.contentHash || '-').slice(0, 10)}</strong></span>
+        <span><small>{confirmedList ? '报告生成于' : '有效期至'}</small><strong>{confirmedList ? (serverReport?.generatedAt ? new Date(serverReport.generatedAt).toLocaleString('zh-CN', { hour12: false }) : '-') : (preview?.expiresAt ? new Date(preview.expiresAt).toLocaleString('zh-CN', { hour12: false }) : '-')}</strong></span>
+      </div>
+      <div className="candidate-list-confirm-items">
+        {items.map((item, index) => {
+          const person = candidates.find((candidate) => candidate.id === item.taskCandidateRef?.id);
+          const reportCandidate = serverReport?.candidates?.find((candidate) => candidate.taskCandidateRef?.id === item.taskCandidateRef?.id);
+          const evidence = item.evidenceRefs || [];
+          const verification = item.needsVerification || person?.risks || [];
+          const selectionReason = reportCandidate?.selectionReason || item.selectionReason || `${person?.status || '推荐'} / ${person?.score ?? '-'} 分；由 HR 纳入本次推荐名单。`;
+          const note = reportCandidate?.note ?? notes?.[item.taskCandidateRef?.id] ?? item.note ?? '';
+          return <article key={item.taskCandidateRef?.id || index}>
+            <header><span className="avatar">{(item.candidate?.displayName || person?.name || '?').slice(0, 1)}</span><div><strong>{item.candidate?.displayName || person?.name || '姓名待核实'}</strong><small>{person ? `${person.score} 分 · ${person.status}` : `候选引用 ${String(item.taskCandidateRef?.id || '').slice(0, 8)}`}</small></div><StatusPill tone="green">已选择</StatusPill></header>
+            <div className="candidate-confirm-selection"><div><strong><UserCheck size={14} />选择理由</strong><p>{selectionReason}</p></div><label><span>HR 备注（选填）</span><textarea maxLength={2000} disabled={Boolean(confirmedList)} value={note} placeholder="补充岗位适配判断、后续核实重点或推荐说明" onChange={(event) => onNoteChange?.(item.taskCandidateRef?.id, event.target.value)} /></label></div>
+            <div className="candidate-confirm-evidence"><strong><FileText size={14} />原文证据</strong>{evidence.length ? evidence.slice(0, 3).map((source, sourceIndex) => <blockquote key={source.id || sourceIndex}>“{source.quote}”<small>{source.sourceLocator?.section || source.sourceType || 'RESUME'}</small></blockquote>) : <p>暂无可定位原文证据，请在待核实项中人工复核。</p>}</div>
+            <div className="candidate-confirm-review"><div className="candidate-confirm-judgments"><strong><Bot size={14} />系统判定</strong>{(reportCandidate?.criteria || []).length ? reportCandidate.criteria.map((criterion) => <p key={criterion.criterionCode}><b>{criterion.criterionCode}</b><span>{criterion.weightedScore} 分 · {criterion.systemJudgment}</span></p>) : (person?.evidence || []).map((criterion) => <p key={criterion.label}><b>{criterion.label}</b><span>{criterion.value}/{criterion.max} · {criterion.explanation || '按已批准评分卡计算'}</span></p>)}</div><div className="candidate-confirm-verification"><strong><CircleHelp size={14} />待核实项</strong><div>{verification.length ? verification.map((risk) => <span key={risk}>{risk}</span>) : <span>无</span>}</div></div></div>
+          </article>;
+        })}
+      </div>
+      <div className="candidate-list-external-impact"><LockKeyhole size={17} /><div><strong>{confirmedList ? '名单版本已固化' : '本次确认的外部影响'}</strong><p>{preview?.invitationPlan?.externalImpactSummary || confirmedList?.invitationPlan?.externalImpactSummary || '只冻结推荐名单，不调用任何外部系统。'}</p></div></div>
+      {confirmedList && <div className="candidate-list-report-meta"><span><small>名单版本</small><strong>v{confirmedList.versionNo || 1}</strong></span><span><small>报告版本</small><strong>v{serverReport?.versionNo || '-'}</strong></span><span><small>确认人</small><strong>{confirmedList.confirmedBy?.displayName || '招聘负责人'}</strong></span><span><small>报告哈希</small><strong>{String(serverReport?.contentHash || confirmedList.contentHash || '-').slice(0, 12)}</strong></span></div>}
+    </>}
+  </DialogShell>;
 }
 
 function ResumeLibraryDialog({ records, queue, loading, error, matchPending, onClose, onRefresh, onUpload, onRun, onRunDemo }) {

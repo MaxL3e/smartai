@@ -6,6 +6,7 @@ import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,11 @@ public class PositionPlanService {
 	private static final String PATCH = "PATCH_POSITION_PLAN";
 	private static final String REVIEW = "REQUEST_POSITION_PLAN_REVIEW";
 	private static final String DECIDE = "DECIDE_POSITION_PLAN_CHECKPOINT";
+	private static final Set<String> CHECKPOINT_STATUSES = Set.of(
+		"PENDING", "APPROVED", "REJECTED", "EXPIRED", "CANCELLED");
+	private static final Set<String> CHECKPOINT_TYPES = Set.of(
+		"CREATE_TASK", "APPROVE_POSITION_PLAN", "PUBLISH_JOB", "CONFIRM_CANDIDATE_LIST",
+		"CONFIRM_EVALUATION", "PUBLISH_KNOWLEDGE");
 
 	private final PositionPlanRepository repository;
 	private final RequirementDraftRepository draftRepository;
@@ -59,6 +65,28 @@ public class PositionPlanService {
 		this.knowledgeRepository = knowledgeRepository;
 		this.generator = generator;
 		this.hasher = hasher;
+	}
+
+	@Transactional(readOnly = true)
+	CheckpointPage listCheckpoints(
+			TenantActor actor,
+			UUID taskId,
+			String status,
+			String type,
+			String cursor,
+			int limit) {
+		if (limit < 1 || limit > 200) throw validation("limit must be between 1 and 200");
+		if (status != null && !CHECKPOINT_STATUSES.contains(status)) throw validation("status is invalid");
+		if (type != null && !CHECKPOINT_TYPES.contains(type)) throw validation("type is invalid");
+		int offset = decodeCheckpointCursor(cursor);
+		List<HumanCheckpoint> values = repository.listCheckpoints(
+			actor.tenantId(), taskId, status, type, limit + 1, offset);
+		boolean hasMore = values.size() > limit;
+		List<HumanCheckpoint> items = values.stream().limit(limit).toList();
+		return new CheckpointPage(
+			items,
+			hasMore,
+			hasMore ? encodeCheckpointCursor(offset + limit) : null);
 	}
 
 	@Transactional
@@ -581,6 +609,28 @@ public class PositionPlanService {
 				"IDEMPOTENCY_CONFLICT",
 				"Idempotency key was already used with a different request");
 		}
+	}
+
+	private static int decodeCheckpointCursor(String cursor) {
+		if (cursor == null || cursor.isBlank()) return 0;
+		try {
+			String value = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.US_ASCII);
+			if (!value.startsWith("checkpoint:")) throw new IllegalArgumentException();
+			int offset = Integer.parseInt(value.substring("checkpoint:".length()));
+			if (offset < 0) throw new IllegalArgumentException();
+			return offset;
+		}
+		catch (IllegalArgumentException exception) {
+			throw validation("cursor is invalid");
+		}
+	}
+
+	private static String encodeCheckpointCursor(int offset) {
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(
+			("checkpoint:" + offset).getBytes(StandardCharsets.US_ASCII));
+	}
+
+	record CheckpointPage(List<HumanCheckpoint> items, boolean hasMore, String nextCursor) {
 	}
 
 	private OffsetDateTime now() {

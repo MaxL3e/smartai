@@ -56,7 +56,7 @@ deploy/                 本地编排、Kubernetes 与环境配置
 
 目录迁移应分阶段进行。当前 `src/` 前端继续作为可运行基线，在 API 契约和模块边界稳定前不做一次性重写。
 
-当前仓库已落地 `apps/host-harness/`、`packages/embed-sdk/`、`packages/contracts/` 和 `apps/core-api/`。Core API 已完成 G1“需求草案 -> 人工确认 -> 招聘任务”、G2“岗位方案 -> 版本修改 -> 人工批准”、独立简历库“PDF/DOC/DOCX/TXT 原件 -> SHA-256 与不可变版本 -> Tika 解析与字段证据 -> 候选规范化”、G3“已解析 ResumeVersion -> 硬过滤 -> 固定评分与证据”和企业知识生命周期，前端简历库与 G3 已调用这些服务。简历上传具备租户隔离、幂等和审计；解析失败会保留真实失败状态，不生成候选事实。当前 local profile 为验证闭环将原件 Base64 存入数据库，生产必须迁移至 MinIO 或客户认可的对象存储，不能将该本地实现视为生产方案。G2/G3 仍使用不调用 LLM/RAG 的确定性引擎；向量知识检索、候选名单确认与推荐报告、真实认证和 PostgreSQL 生产实例仍未完成。
+当前仓库已落地 `apps/host-harness/`、`packages/embed-sdk/`、`packages/contracts/` 和 `apps/core-api/`。Core API 已完成 G1“需求草案 -> 人工确认 -> 招聘任务”、G2“岗位方案 -> 版本修改 -> 人工批准”、独立简历库“PDF/DOC/DOCX/TXT 原件 -> SHA-256 与不可变版本 -> Tika 解析与字段证据 -> 候选规范化”、G3“已解析 ResumeVersion -> 硬过滤 -> 固定评分与证据”、G4“冻结预览 -> 人工门禁 -> 不可变名单 -> 版本化推荐报告”和企业知识生命周期，前端简历库、G3 与 G4 已调用这些服务。G4 报告区分原文证据、系统判定和待核实项，可按 TXT/JSON 下载，确认时不发送面试邀请。简历上传具备租户隔离、幂等和审计；解析失败会保留真实失败状态，不生成候选事实。当前 local profile 为验证闭环将原件 Base64 存入数据库，生产必须迁移至 MinIO 或客户认可的对象存储，不能将该本地实现视为生产方案。G2/G3 仍使用不调用 LLM/RAG 的确定性引擎；向量知识检索、真实认证和 PostgreSQL 生产实例仍未完成。
 
 提交前运行 `npm run test:agent`、`npm run contracts:check` 与 `npm run test:embed`。Core API 使用显式 `local` profile 启动并以干净构建验证：Windows 执行 `cd apps/core-api` 后运行 `.\mvnw.cmd clean test`，Linux/macOS 运行 `./mvnw clean test`；启动命令分别为 `.\mvnw.cmd -Dspring-boot.run.profiles=local spring-boot:run` 和 `./mvnw -Dspring-boot.run.profiles=local spring-boot:run`。
 

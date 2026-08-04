@@ -171,6 +171,7 @@ export function mapRecruitmentTaskResponse(envelope, draft = {}) {
     serviceTask: {
       id: source.id,
       version: source.version,
+      etag: envelope?.__responseMeta?.etag || `"${source.version}"`,
       lifecycleStatus: source.lifecycleStatus,
       executionStatus: source.executionStatus,
       creationCheckpointRef: source.creationCheckpointRef,
@@ -365,6 +366,73 @@ function requireServiceTask(task) {
   return taskId;
 }
 
+function requireVersionedServiceTask(task) {
+  const source = task?.serviceTask || task;
+  const id = requireServiceTask(task);
+  const version = Number(source?.version);
+  if (!Number.isInteger(version) || version < 1) {
+    throw new RecruitmentAgentError('招聘任务缺少服务端版本信息', {
+      code: 'TASK_VERSION_MISSING',
+      retryable: false,
+    });
+  }
+  return {
+    id,
+    version,
+    etag: source.etag || `"${version}"`,
+  };
+}
+
+export async function getRecruitmentTask(task, requestOptions = {}) {
+  const taskId = requireServiceTask(task);
+  return requestJson(`/api/core/v1/recruitment-tasks/${encodeURIComponent(taskId)}`, {
+    ...requestOptions,
+    method: 'GET',
+    idempotencyKey: null,
+  });
+}
+
+function requireResourceRef(value, expectedType, code, message) {
+  const version = Number(value?.version);
+  if (value?.type !== expectedType || !value?.id || !Number.isInteger(version) || version < 1) {
+    throw new RecruitmentAgentError(message, { code, retryable: false });
+  }
+  return { type: expectedType, id: value.id, version };
+}
+
+function requireInputHash(value, code, message) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) {
+    throw new RecruitmentAgentError(message, { code, retryable: false });
+  }
+  return normalized;
+}
+
+function normalizeInvitationPlan(value) {
+  const source = value || {};
+  const requiredFields = [
+    'connectorId',
+    'templateId',
+    'deadline',
+    'channel',
+    'messageTemplateId',
+    'externalImpactSummary',
+  ];
+  if (requiredFields.some((field) => source[field] == null || String(source[field]).trim() === '')) {
+    throw new RecruitmentAgentError('候选名单预览缺少完整的邀请方案', {
+      code: 'CANDIDATE_INVITATION_PLAN_MISSING',
+      retryable: false,
+    });
+  }
+  if (!['SMS', 'EMAIL', 'ENTERPRISE_MESSAGE'].includes(source.channel)) {
+    throw new RecruitmentAgentError('候选邀请渠道不受支持', {
+      code: 'CANDIDATE_INVITATION_CHANNEL_INVALID',
+      retryable: false,
+    });
+  }
+  return Object.fromEntries(requiredFields.map((field) => [field, source[field]]));
+}
+
 function requireServicePlan(plan) {
   const source = plan?.servicePlan || plan;
   if (!source?.id || !Number.isInteger(Number(source.version)) || Number(source.version) < 1) {
@@ -457,8 +525,36 @@ export async function decideHumanCheckpoint(checkpoint, requestOptions = {}) {
     body: {
       decision: requestOptions.decision || 'APPROVE',
       inputHash: source.inputHash,
-      comment: requestOptions.comment || '招聘负责人已核对岗位方案、评分卡和推荐阈值',
+      comment: requestOptions.comment ?? '确认人已核对待确认正文并提交人工决定',
     },
+  });
+}
+
+export async function getHumanCheckpoint(checkpointId, requestOptions = {}) {
+  const normalizedId = String(checkpointId || '').trim();
+  if (!normalizedId) {
+    throw new RecruitmentAgentError('Human checkpoint identity is missing', {
+      code: 'CHECKPOINT_IDENTITY_MISSING',
+      retryable: false,
+    });
+  }
+  return requestJson(`/api/core/v1/human-checkpoints/${encodeURIComponent(normalizedId)}`, {
+    ...requestOptions,
+    method: 'GET',
+    idempotencyKey: null,
+  });
+}
+
+export async function listHumanCheckpoints(task, filters = {}, requestOptions = {}) {
+  const taskId = requireServiceTask(task);
+  const params = new URLSearchParams({ taskId, limit: String(filters.limit || 20) });
+  if (filters.status) params.set('status', filters.status);
+  if (filters.type) params.set('type', filters.type);
+  if (filters.cursor) params.set('cursor', filters.cursor);
+  return requestJson(`/api/core/v1/human-checkpoints?${params.toString()}`, {
+    ...requestOptions,
+    method: 'GET',
+    idempotencyKey: null,
   });
 }
 
@@ -552,6 +648,190 @@ export async function listMatchResults(matchRunId, requestOptions = {}) {
     method: 'GET',
     idempotencyKey: null,
   });
+}
+
+export async function createCandidateListPreview(task, previewRequest, requestOptions = {}) {
+  const taskId = requireServiceTask(task);
+  const matchRunRef = requireResourceRef(
+    previewRequest?.matchRunRef,
+    'MatchRun',
+    'MATCH_RUN_REF_MISSING',
+    '候选名单预览缺少匹配运行版本',
+  );
+  if (!Array.isArray(previewRequest?.taskCandidateRefs) || previewRequest.taskCandidateRefs.length === 0) {
+    throw new RecruitmentAgentError('请至少选择一位服务端候选人', {
+      code: 'TASK_CANDIDATE_REFS_MISSING',
+      retryable: false,
+    });
+  }
+  const taskCandidateRefs = previewRequest.taskCandidateRefs.map((reference) => requireResourceRef(
+    reference,
+    'TaskCandidate',
+    'TASK_CANDIDATE_REF_INVALID',
+    '候选名单包含无效的候选人版本',
+  ));
+  const selectedIds = new Set(taskCandidateRefs.map((reference) => reference.id));
+  const selectionNotes = Object.fromEntries(Object.entries(previewRequest.selectionNotes || {})
+    .filter(([candidateId, note]) => selectedIds.has(candidateId) && String(note || '').trim())
+    .map(([candidateId, note]) => [candidateId, String(note).trim().slice(0, 2000)]));
+  return requestJson(`/api/core/v1/recruitment-tasks/${encodeURIComponent(taskId)}/candidate-list-previews`, {
+    ...requestOptions,
+    method: 'POST',
+    body: {
+      matchRunRef,
+      taskCandidateRefs,
+      selectionNotes,
+      invitationPlan: normalizeInvitationPlan(previewRequest.invitationPlan),
+    },
+  });
+}
+
+export async function getCandidateListPreview(previewId, requestOptions = {}) {
+  const normalizedId = String(previewId || '').trim();
+  if (!normalizedId) {
+    throw new RecruitmentAgentError('Candidate-list preview identity is missing', {
+      code: 'CANDIDATE_LIST_PREVIEW_REF_MISSING',
+      retryable: false,
+    });
+  }
+  return requestJson(`/api/core/v1/candidate-list-previews/${encodeURIComponent(normalizedId)}`, {
+    ...requestOptions,
+    method: 'GET',
+    idempotencyKey: null,
+  });
+}
+
+export async function requestCandidateListReview(task, reviewRequest, requestOptions = {}) {
+  const serviceTask = requireVersionedServiceTask(task);
+  const requiredRole = reviewRequest?.requiredRole || 'RECRUITMENT_MANAGER';
+  if (!['RECRUITMENT_MANAGER', 'HIRING_MANAGER'].includes(requiredRole)) {
+    throw new RecruitmentAgentError('候选名单确认角色不受支持', {
+      code: 'CANDIDATE_LIST_REVIEW_ROLE_INVALID',
+      retryable: false,
+    });
+  }
+  return requestJson(`/api/core/v1/recruitment-tasks/${encodeURIComponent(serviceTask.id)}/candidate-list-review-requests`, {
+    ...requestOptions,
+    method: 'POST',
+    etag: requestOptions.etag || serviceTask.etag,
+    body: {
+      previewRef: requireResourceRef(
+        reviewRequest?.previewRef,
+        'CandidateListPreview',
+        'CANDIDATE_LIST_PREVIEW_REF_MISSING',
+        '候选名单审核缺少预览版本引用',
+      ),
+      inputHash: requireInputHash(
+        reviewRequest?.inputHash,
+        'CANDIDATE_LIST_INPUT_HASH_MISSING',
+        '候选名单审核缺少服务端确认摘要',
+      ),
+      requiredRole,
+      assigneeUserId: reviewRequest?.assigneeUserId ?? null,
+      comment: reviewRequest?.comment ?? '招聘负责人提交候选名单确认',
+      expiresAt: reviewRequest?.expiresAt ?? null,
+    },
+  });
+}
+
+export async function confirmCandidateList(task, confirmRequest, requestOptions = {}) {
+  const serviceTask = requireVersionedServiceTask(task);
+  const checkpointId = String(confirmRequest?.checkpointId || '').trim();
+  if (!checkpointId) {
+    throw new RecruitmentAgentError('确认候选名单前必须先完成人工门禁', {
+      code: 'CANDIDATE_LIST_CHECKPOINT_MISSING',
+      retryable: false,
+    });
+  }
+  return requestJson(`/api/core/v1/recruitment-tasks/${encodeURIComponent(serviceTask.id)}/candidate-lists/confirm`, {
+    ...requestOptions,
+    method: 'POST',
+    etag: requestOptions.etag || serviceTask.etag,
+    body: {
+      previewRef: requireResourceRef(
+        confirmRequest?.previewRef,
+        'CandidateListPreview',
+        'CANDIDATE_LIST_PREVIEW_REF_MISSING',
+        '确认候选名单缺少预览版本引用',
+      ),
+      checkpointId,
+    },
+  });
+}
+
+export async function getCurrentCandidateList(task, requestOptions = {}) {
+  const taskId = requireServiceTask(task);
+  return requestJson(`/api/core/v1/recruitment-tasks/${encodeURIComponent(taskId)}/candidate-lists/current`, {
+    ...requestOptions,
+    method: 'GET',
+    idempotencyKey: null,
+  });
+}
+
+export async function getCurrentRecommendationReport(task, requestOptions = {}) {
+  const taskId = requireServiceTask(task);
+  return requestJson(`/api/core/v1/recruitment-tasks/${encodeURIComponent(taskId)}/recommendation-reports/current`, {
+    ...requestOptions,
+    method: 'GET',
+    idempotencyKey: null,
+  });
+}
+
+export async function downloadRecommendationReport(reportId, format, {
+  accessToken,
+  baseUrl,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  const normalizedId = String(reportId || '').trim();
+  const normalizedFormat = String(format || '').trim().toUpperCase();
+  if (!normalizedId || !['TXT', 'JSON'].includes(normalizedFormat)) {
+    throw new RecruitmentAgentError('推荐报告下载参数不完整', {
+      code: 'RECOMMENDATION_REPORT_DOWNLOAD_INVALID',
+      retryable: false,
+    });
+  }
+  if (typeof fetchImpl !== 'function') {
+    throw new RecruitmentAgentError('当前环境无法下载推荐报告', { code: 'FETCH_UNAVAILABLE' });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const requestId = randomRequestId();
+  const headers = {
+    Accept: normalizedFormat === 'JSON' ? 'application/json' : 'text/plain',
+    'X-Request-Id': requestId,
+    'X-Correlation-Id': requestId,
+  };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  try {
+    const response = await fetchImpl(`${resolveCoreApiUrl(baseUrl)}/api/core/v1/recommendation-reports/${encodeURIComponent(normalizedId)}/download?format=${normalizedFormat}`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'omit',
+      headers,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const errorBody = await readErrorBody(response);
+      throw new RecruitmentAgentError(errorBody?.error?.message || `推荐报告下载失败（${response.status}）`, {
+        code: errorBody?.error?.code || `HTTP_${response.status}`,
+        status: response.status,
+        retryable: response.status >= 500,
+      });
+    }
+    const disposition = responseHeader(response, 'Content-Disposition') || '';
+    const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+      || `recommendation-report-${normalizedId}.${normalizedFormat.toLowerCase()}`;
+    return { blob: await response.blob(), fileName };
+  } catch (error) {
+    if (error instanceof RecruitmentAgentError) throw error;
+    if (error?.name === 'AbortError') {
+      throw new RecruitmentAgentError('推荐报告下载超时', { code: 'AGENT_TIMEOUT', cause: error });
+    }
+    throw new RecruitmentAgentError('无法连接推荐报告服务', { code: 'AGENT_UNAVAILABLE', cause: error });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function resolveRequirementDraft(input, previous = {}, {
